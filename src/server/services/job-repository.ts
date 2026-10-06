@@ -4,12 +4,14 @@ import {
   INITIAL_ECS_JOBS,
   type EcsJob,
   type JobChatMessage,
+  type JobSubChatUpdate,
   type WorkflowCode,
 } from '../../client/src/types/jobs.ts'
 import type { ILogger } from '../logging/logger.ts'
 import type { IJobAgentRunner } from './job-agent-runner.ts'
 
 export type JobsSubscriber = (jobs: EcsJob[]) => void
+export type JobProgressSubscriber = (update: JobSubChatUpdate) => void
 
 export interface CreateJobInput {
   code?: WorkflowCode
@@ -41,6 +43,7 @@ export interface IJobRepository {
   remove(id: string): Promise<boolean>
   tickProgress(): Promise<boolean>
   subscribe(listener: JobsSubscriber): () => void
+  subscribeProgressUpdates(listener: JobProgressSubscriber): () => void
 }
 
 const JOB_QUEUE_NAME = 'ecs-llm-job'
@@ -116,8 +119,9 @@ interface PgBossTaskPayload {
 
 /**
  * Job Manager & Repository powered by PGlite and pg-boss.
- * Orchestrates single-purpose LLM jobs, persisting state in PGlite and
- * scheduling/cancelling/updating jobs via pg-boss.
+ * Orchestrates single-purpose LLM jobs, persisting state in PGlite,
+ * scheduling/cancelling/updating jobs via pg-boss, and emitting routine
+ * concise updates from each job's sub-conversation.
  */
 export class PglitePgBossJobManager implements IJobRepository {
   private readonly pg: PGlite
@@ -125,11 +129,13 @@ export class PglitePgBossJobManager implements IJobRepository {
   private readonly logger: ILogger
   private readonly agentRunner: IJobAgentRunner
   private readonly listeners = new Set<JobsSubscriber>()
+  private readonly progressListeners = new Set<JobProgressSubscriber>()
   private readonly activeControllers = new Map<string, AbortController>()
   private readonly jobRevisions = new Map<string, number>()
   private jobsCache: EcsJob[] = []
   private initialized = false
   private nextSequence = 4100
+  private routineRotationIndex = 0
 
   constructor(
     logger: ILogger,
@@ -189,7 +195,6 @@ export class PglitePgBossJobManager implements IJobRepository {
     await this.boss.start()
     await this.boss.createQueue(JOB_QUEUE_NAME)
 
-    // Register the pg-boss worker that runs single-purpose LLM jobs
     await this.boss.work<PgBossTaskPayload>(
       JOB_QUEUE_NAME,
       { pollingIntervalSeconds: 1, batchSize: 2 },
@@ -225,7 +230,6 @@ export class PglitePgBossJobManager implements IJobRepository {
       },
     )
 
-    // Seed initial jobs into PGlite and enqueue in-progress jobs into pg-boss
     const existing = await this.pg.query<{ count: string }>(
       'SELECT COUNT(*)::text AS count FROM ecs_jobs',
     )
@@ -291,6 +295,8 @@ export class PglitePgBossJobManager implements IJobRepository {
       `Execute ${code} (${wf.system}) analysis and telemetry verification for ${airportIata} (${ap.name}): ${title}.`
     const nowTime = new Date().toISOString().slice(11, 19)
 
+    const initialSubMessage = `Queued in pg-boss (${JOB_QUEUE_NAME}). Initializing ${wf.system} components for ${airportIata}/${ap.icao}.`
+
     const initialChatHistory: JobChatMessage[] = [
       {
         id: `msg-${Date.now()}-1`,
@@ -301,7 +307,7 @@ export class PglitePgBossJobManager implements IJobRepository {
       {
         id: `msg-${Date.now()}-2`,
         role: 'assistant',
-        content: `Queued in pg-boss (${JOB_QUEUE_NAME}). Initializing ${wf.system} components for ${airportIata}/${ap.icao}.`,
+        content: initialSubMessage,
         timestamp: nowTime,
       },
     ]
@@ -372,6 +378,7 @@ export class PglitePgBossJobManager implements IJobRepository {
       purpose: newJob.purpose,
     })
     this.notifySubscribers()
+    this.emitProgressUpdate(newJob, initialSubMessage, nowTime)
     return structuredClone(newJob)
   }
 
@@ -400,12 +407,20 @@ export class PglitePgBossJobManager implements IJobRepository {
 
     const updatedChatHistory = [...current.chatHistory]
     const updatedSteps = [...current.steps]
+    let subChatAck = ''
 
     if (purposeChanged || titleChanged) {
       updatedChatHistory.push({
-        id: `msg-update-${Date.now()}`,
+        id: `msg-update-u-${Date.now()}`,
         role: 'user',
         content: `Updated job purpose: ${nextPurpose}`,
+        timestamp: nowTime,
+      })
+      subChatAck = `Re-orchestrated in pg-boss for updated purpose: "${nextPurpose}". Executing ${wf.system} at ${current.progress}%.`
+      updatedChatHistory.push({
+        id: `msg-update-a-${Date.now()}`,
+        role: 'assistant',
+        content: subChatAck,
         timestamp: nowTime,
       })
       updatedSteps.push({
@@ -430,7 +445,6 @@ export class PglitePgBossJobManager implements IJobRepository {
       chatHistory: updatedChatHistory,
     }
 
-    // If a running job is updated, interrupt the old execution and re-orchestrate via pg-boss
     if (wasRunning && (purposeChanged || titleChanged || patch.status === 'in_progress')) {
       const activeCtrl = this.activeControllers.get(current.id)
       if (activeCtrl) {
@@ -471,6 +485,9 @@ export class PglitePgBossJobManager implements IJobRepository {
       purpose: updated.purpose,
     })
     this.notifySubscribers()
+    if (subChatAck) {
+      this.emitProgressUpdate(updated, subChatAck, nowTime)
+    }
     return structuredClone(updated)
   }
 
@@ -485,14 +502,12 @@ export class PglitePgBossJobManager implements IJobRepository {
       return structuredClone(current)
     }
 
-    // 1. Signal active AbortController for this running job
     const activeCtrl = this.activeControllers.get(current.id)
     if (activeCtrl) {
       activeCtrl.abort(reason || 'Aborted by operator')
       this.activeControllers.delete(current.id)
     }
 
-    // 2. Cancel the job in pg-boss queue
     if (this.initialized && current.pgBossJobId) {
       try {
         await this.boss.cancel(JOB_QUEUE_NAME, current.pgBossJobId)
@@ -514,10 +529,12 @@ export class PglitePgBossJobManager implements IJobRepository {
       state: 'warning' as const,
     }
 
+    const abortedSubMsg = `Sub-conversation halted at ${current.progress}%: ${abortDetail}`
+
     const abortedMessage: JobChatMessage = {
       id: `msg-abort-${Date.now()}`,
       role: 'assistant',
-      content: `Job aborted: ${abortDetail}`,
+      content: abortedSubMsg,
       timestamp: nowTime,
     }
 
@@ -540,6 +557,7 @@ export class PglitePgBossJobManager implements IJobRepository {
       reason: abortDetail,
     })
     this.notifySubscribers()
+    this.emitProgressUpdate(updated, abortedSubMsg, nowTime)
     return structuredClone(updated)
   }
 
@@ -581,11 +599,14 @@ export class PglitePgBossJobManager implements IJobRepository {
 
   async tickProgress(): Promise<boolean> {
     let changed = false
+    const inProgressIndices: number[] = []
+
     for (let i = 0; i < this.jobsCache.length; i++) {
       const job = this.jobsCache[i]
       if (job.status !== 'in_progress') continue
       changed = true
-      const nextProgress = job.progress >= 96 ? 35 : job.progress + 1
+      inProgressIndices.push(i)
+      const nextProgress = job.progress >= 96 ? 35 : job.progress + 2
       const updated: EcsJob = {
         ...job,
         progress: nextProgress,
@@ -595,6 +616,50 @@ export class PglitePgBossJobManager implements IJobRepository {
         await this.persistJobToDb(updated)
       }
     }
+
+    // Routinely advance one active job's sub-conversation and broadcast a concise progress update
+    if (inProgressIndices.length > 0) {
+      const chosenIdx =
+        inProgressIndices[this.routineRotationIndex % inProgressIndices.length]
+      this.routineRotationIndex++
+
+      const targetJob = this.jobsCache[chosenIdx]
+      const nowTime = new Date().toISOString().slice(11, 19)
+      const activeStage =
+        targetJob.steps.find((s) => s.state === 'active') ??
+        targetJob.steps[targetJob.steps.length - 1]
+
+      const subMsgText = `[${targetJob.progress}%] ${targetJob.ecsSystem} (${activeStage?.stage ?? targetJob.lifecycleState}): ${targetJob.keyMetricLabel} verified at ${targetJob.keyMetricValue} for ${targetJob.airportIata}.`
+
+      const newSubMessage: JobChatMessage = {
+        id: `sub-${Date.now()}`,
+        role: 'assistant',
+        content: subMsgText,
+        timestamp: nowTime,
+      }
+
+      const trimmedHistory =
+        targetJob.chatHistory.length >= 6
+          ? [
+              targetJob.chatHistory[0],
+              ...targetJob.chatHistory.slice(-4),
+              newSubMessage,
+            ]
+          : [...targetJob.chatHistory, newSubMessage]
+
+      const updatedWithSubChat: EcsJob = {
+        ...targetJob,
+        chatHistory: trimmedHistory,
+      }
+
+      this.jobsCache[chosenIdx] = updatedWithSubChat
+      if (this.initialized) {
+        await this.persistJobToDb(updatedWithSubChat)
+      }
+
+      this.emitProgressUpdate(updatedWithSubChat, subMsgText, nowTime)
+    }
+
     if (changed) {
       this.notifySubscribers()
     }
@@ -605,6 +670,38 @@ export class PglitePgBossJobManager implements IJobRepository {
     this.listeners.add(listener)
     return () => {
       this.listeners.delete(listener)
+    }
+  }
+
+  subscribeProgressUpdates(listener: JobProgressSubscriber): () => void {
+    this.progressListeners.add(listener)
+    return () => {
+      this.progressListeners.delete(listener)
+    }
+  }
+
+  private emitProgressUpdate(
+    job: EcsJob,
+    subConversationMessage: string,
+    timestamp: string,
+  ): void {
+    const update: JobSubChatUpdate = {
+      id: `upd-${job.id}-${Date.now()}`,
+      jobId: job.id,
+      code: job.code,
+      airportIata: job.airportIata,
+      title: job.title,
+      status: job.status,
+      progress: job.progress,
+      subConversationMessage,
+      timestamp,
+    }
+    for (const listener of this.progressListeners) {
+      try {
+        listener(update)
+      } catch {
+        // Ignore subscriber error
+      }
     }
   }
 
@@ -624,6 +721,11 @@ export class PglitePgBossJobManager implements IJobRepository {
     this.jobsCache[idx] = updated
     await this.persistJobToDb(updated)
     this.notifySubscribers()
+
+    const latestMsg = updated.chatHistory[updated.chatHistory.length - 1]
+    if (latestMsg && latestMsg.role === 'assistant') {
+      this.emitProgressUpdate(updated, latestMsg.content, latestMsg.timestamp)
+    }
   }
 
   private async persistJobToDb(job: EcsJob): Promise<void> {

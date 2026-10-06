@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
-import type { EcsJob } from '../../client/src/types/jobs.ts'
+import type { EcsJob, JobSubChatUpdate } from '../../client/src/types/jobs.ts'
 import type {
   CreateJobInput,
   IJobRepository,
@@ -28,15 +28,30 @@ export function createJobsRoutes(jobRepository: IJobRepository, logger: ILogger)
         })
       }
 
+      const sendSubChatUpdate = async (update: JobSubChatUpdate) => {
+        if (!active) return
+        await stream.writeSSE({
+          event: 'job:chat_update',
+          data: JSON.stringify(update),
+        })
+      }
+
       await sendSnapshot(jobRepository.getAll())
 
-      const unsubscribe = jobRepository.subscribe((jobs) => {
+      const unsubscribeJobs = jobRepository.subscribe((jobs) => {
         sendSnapshot(jobs).catch(() => {})
       })
 
+      const unsubscribeProgress = jobRepository.subscribeProgressUpdates(
+        (update) => {
+          sendSubChatUpdate(update).catch(() => {})
+        },
+      )
+
       stream.onAbort(() => {
         active = false
-        unsubscribe()
+        unsubscribeJobs()
+        unsubscribeProgress()
         logger.info('jobs.sse_client_disconnected')
       })
 
