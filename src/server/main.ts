@@ -1,5 +1,7 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { serve } from '@hono/node-server'
+import { serveStatic } from '@hono/node-server/serve-static'
 import {
   convertToModelMessages,
   createUIMessageStreamResponse,
@@ -11,10 +13,7 @@ import { openai } from '@ai-sdk/openai'
 
 const app = new Hono()
 
-app.use('*', cors({
-  origin: ['http://localhost:5173'],
-  allowHeaders: ['Content-Type'],
-}))
+app.use('*', cors())
 
 app.post('/api/chat', async (c) => {
   const { messages }: { messages: UIMessage[] } = await c.req.json()
@@ -30,6 +29,16 @@ app.post('/api/chat', async (c) => {
   })
 })
 
-app.get('/', (c) => c.text('Hono is running'))
+app.get('/api/health', (c) => c.text('Hono is running'))
+
+app.use('/*', serveStatic({ root: './src/client/dist' }))
+app.get('*', serveStatic({ path: './src/client/dist/index.html' }))
+
+const port = Number(process.env.PORT) || 3000
+serve({
+  fetch: app.fetch,
+  port,
+  hostname: '0.0.0.0',
+})
 
 export default app

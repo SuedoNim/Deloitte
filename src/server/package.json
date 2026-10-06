@@ -1,6 +1,10 @@
 {
+  "name": "server",
+  "private": true,
+  "type": "module",
   "dependencies": {
     "@ai-sdk/openai": "^4.0.84",
+    "@hono/node-server": "^1.14.0",
     "ai": "^7.0.128",
     "cors": "^2.8.6",
     "hono": "^4.13.13"

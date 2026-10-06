@@ -1,0 +1,5 @@
+{
+  "name": "Deloitte Airport Modernization ECS",
+  "description": "Airport Modernization ECS architecture workspace with SolidJS client and Hono AI backend.",
+  "requestFramePermissions": []
+}

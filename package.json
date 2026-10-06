@@ -1,0 +1,37 @@
+{
+  "name": "deloitte-airport-modernization",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "workspaces": [
+    "src/client",
+    "src/server"
+  ],
+  "scripts": {
+    "build:frontend": "npm run build --workspace=src/client",
+    "build": "npm run build:frontend",
+    "dev:client": "npm run dev --workspace=src/client",
+    "dev:server": "tsx watch src/server/main.ts",
+    "dev": "npm run build:frontend && tsx src/server/main.ts",
+    "debug": "npm run build:frontend && tsx watch src/server/main.ts",
+    "typecheck": "tsc -b src/client/tsconfig.json",
+    "knip": "npm run knip --workspace=src/client",
+    "start": "tsx src/server/main.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^4.0.84",
+    "@hono/node-server": "^1.14.0",
+    "ai": "^7.0.128",
+    "cors": "^2.8.6",
+    "hono": "^4.13.13",
+    "solid-js": "^1.9.15"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "knip": "^6.39.0",
+    "tsx": "^4.19.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0",
+    "vite-plugin-solid": "^2.11.14"
+  }
+}
