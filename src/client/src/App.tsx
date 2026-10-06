@@ -11,12 +11,14 @@ import {
   INITIAL_ECS_JOBS,
   type EcsJob,
   type JobStatus,
+  type JobSubChatUpdate,
   type ModelConnectionConfig,
   type WorkflowCode,
 } from './types/jobs'
 import './App.css'
 
 const STORAGE_KEY_CONNECTION = 'ecs_model_connection_v1'
+const ROUTINE_DIGEST_MESSAGE_ID = 'routine-job-subchat-digest'
 
 const SEEDED_MESSAGES: UIMessage[] = [
   {
@@ -26,15 +28,15 @@ const SEEDED_MESSAGES: UIMessage[] = [
       {
         type: 'text',
         text: [
-          '### Airport Modernization ECS — Operations & Job Assistant',
+          '### Job Management Orchestrator (`PGlite` + `pg-boss`)',
           '',
-          'Connected to the Hono server (`/api/chat`, `/api/jobs/stream`, `/api/connection`). Configure your **API Token** and **Model Connection** endpoint in the connection bar above, or inspect the server-synced **Ongoing ECS Jobs** panel on the right:',
+          'This main chat is scoped exclusively to **Job Management Tools** (`createJob`, `updateJob`, `abortJob`, `removeJob`, `listJobs`) to create, update, abort, or remove single-purpose LLM jobs.',
           '',
-          '- **In Progress (Yellow)**: `JOB-4091` (DEN · BNATCS Surface Radar), `JOB-4094` (DEL · Biometric Self-Bag-Drop), `JOB-4096` (LAX · SWIM SFDPS Sync), `JOB-4085` (ORD · AIP Grant Drawdown)',
-          '- **Complete (Green)**: `JOB-4079` (DEN · 100% Gate Electrification Glidepath)',
-          '- **Failure (Red)**: `JOB-4088` (JFK · 91% ORAT Gate Hold on CyberResilienceCheck)',
+          '- **In Progress (Yellow)**: `JOB-4091` (DEN · W4), `JOB-4094` (DEL · W3), `JOB-4096` (LAX · W7), `JOB-4085` (ORD · W1)',
+          '- **Complete (Green)**: `JOB-4079` (DEN · W5 Gate Electrification)',
+          '- **Failure (Red)**: `JOB-4088` (JFK · W2 ORAT Gate Hold)',
           '',
-          'Use the **Ask** icon button on any job item to query its live server telemetry, or the **Abort** icon button next to it to halt an active run.',
+          'Expand any job on the right to view its **Single Specific Purpose** and **Job LLM Sub-Conversation**, or tell me what job you would like to create, update, abort, or remove.',
         ].join('\n'),
       },
     ],
@@ -42,10 +44,10 @@ const SEEDED_MESSAGES: UIMessage[] = [
 ]
 
 const PROMPT_STARTERS = [
-  'Diagnose JOB-4088 ORAT gate failure at JFK and remediation steps',
-  'Summarize JOB-4091 BNATCS surface radar cutover progress at DEN',
-  'Evaluate DEL T3 biometric self-bag-drop stage time (JOB-4094)',
-  'Calculate W1 AIP & ATP grant drawdown ratio for ORD (JOB-4085)',
+  'Create a W1 job for JFK to audit AIP grant drawdown and DSCR coverage',
+  'Update JOB-4091 purpose to verify Runway 34L surface radar cutover latency',
+  'Abort JOB-4085 in pg-boss',
+  'Remove JOB-4088 from the job queue',
 ]
 
 function renderFormattedText(raw: string) {
@@ -86,6 +88,8 @@ export default function App() {
   const [searchQuery, setSearchQuery] = createSignal('')
   const [inputPrompt, setInputPrompt] = createSignal('')
   const [attachSelectedJob, setAttachSelectedJob] = createSignal(true)
+  const [routineUpdatesEnabled, setRoutineUpdatesEnabled] = createSignal(true)
+  const [recentSubChatUpdates, setRecentSubChatUpdates] = createSignal<JobSubChatUpdate[]>([])
   const [mobileView, setMobileView] = createSignal<'split' | 'jobs' | 'chat'>('split')
   const [isDispatchModalOpen, setIsDispatchModalOpen] = createSignal(false)
 
@@ -132,6 +136,49 @@ export default function App() {
     }
   }
 
+  /**
+   * Routinely posts/updates a concise assistant progress message in the main chat
+   * reflecting the latest sub-conversation messages from active jobs.
+   */
+  const pushRoutineSubChatUpdateToMainChat = (update: JobSubChatUpdate) => {
+    if (!routineUpdatesEnabled()) return
+    if (chatStatus() === 'submitted' || chatStatus() === 'streaming') return
+
+    const nextUpdates = [
+      update,
+      ...recentSubChatUpdates().filter((u) => u.jobId !== update.jobId),
+    ].slice(0, 4)
+    setRecentSubChatUpdates(nextUpdates)
+
+    const digestText = [
+      `### Routine Job Chats Progress Digest (Sub-Conversation Sync)`,
+      ``,
+      ...nextUpdates.map(
+        (u) =>
+          `- **${u.jobId} (${u.code} · ${u.airportIata} · ${u.progress}%)** [${u.timestamp}]: ${u.subConversationMessage}`,
+      ),
+    ].join('\n')
+
+    const currentMsgs = messages()
+    const existingIdx = currentMsgs.findIndex(
+      (m) => m.id === ROUTINE_DIGEST_MESSAGE_ID,
+    )
+
+    const digestMsg: UIMessage = {
+      id: ROUTINE_DIGEST_MESSAGE_ID,
+      role: 'assistant',
+      parts: [{ type: 'text', text: digestText }],
+    }
+
+    if (existingIdx !== -1) {
+      const updatedMsgs = [...currentMsgs]
+      updatedMsgs[existingIdx] = digestMsg
+      setMessages(updatedMsgs)
+    } else {
+      setMessages([...currentMsgs, digestMsg])
+    }
+  }
+
   onMount(() => {
     clientLogger.info('client.app_mounted')
 
@@ -175,6 +222,9 @@ export default function App() {
       onOpen: () => {},
       onJobsSync: (syncedJobs) => {
         setJobs(syncedJobs)
+      },
+      onJobChatUpdate: (update) => {
+        pushRoutineSubChatUpdateToMainChat(update)
       },
       onError: () => {},
     })
@@ -230,6 +280,7 @@ export default function App() {
         job.id.toLowerCase().includes(q) ||
         job.code.toLowerCase().includes(q) ||
         job.title.toLowerCase().includes(q) ||
+        job.purpose.toLowerCase().includes(q) ||
         job.airportIata.toLowerCase().includes(q) ||
         job.airportIcao.toLowerCase().includes(q) ||
         job.ecsSystem.toLowerCase().includes(q)
@@ -304,7 +355,7 @@ export default function App() {
     }
     await sendMessage(
       {
-        text: `Analyze ongoing job ${job.id} (${job.code} · ${job.title} at ${job.airportIata}/${job.airportIcao}, status: ${job.status}, progress: ${job.progress}%) and provide recommended ECS actions.`,
+        text: `Inspect ${job.id} (${job.code} · ${job.title} at ${job.airportIata}) and summarize its single purpose and sub-conversation status.`,
       },
       buildRequestOptions(),
     )
@@ -341,6 +392,7 @@ export default function App() {
     code: WorkflowCode
     airportIata: string
     title: string
+    purpose: string
   }) => {
     const result = await apiClient.createJob(payload)
     if (result?.jobs) {
@@ -373,28 +425,28 @@ export default function App() {
         >
           <div class="chat-header">
             <div class="chat-header-info">
-              <h1 class="chat-title">ECS Modernization Assistant</h1>
+              <h1 class="chat-title">Job Management Orchestrator Chat</h1>
               <p class="chat-subtitle">
-                Vercel AI UI ·{' '}
+                Tools: createJob · updateJob · abortJob · removeJob · listJobs ·{' '}
                 <span class="tabular-nums">
                   {hasActiveToken()
                     ? `Connected (${modelId() || 'gpt-4o-mini'})`
-                    : `Server Engine (${modelId() || 'gpt-4o-mini'} · No API token set)`}
-                </span>{' '}
-                · Stream:{' '}
-                <span class="tabular-nums">
-                  {chatStatus() === 'ready'
-                    ? 'Ready'
-                    : chatStatus() === 'streaming'
-                      ? 'Streaming…'
-                      : chatStatus() === 'submitted'
-                        ? 'Connecting…'
-                        : 'Error'}
+                    : `PGlite + pg-boss Engine (${modelId() || 'gpt-4o-mini'})`}
                 </span>
               </p>
             </div>
 
             <div class="chat-header-actions">
+              <button
+                type="button"
+                class="btn-secondary"
+                aria-pressed={routineUpdatesEnabled()}
+                onClick={() => setRoutineUpdatesEnabled((v) => !v)}
+              >
+                {routineUpdatesEnabled()
+                  ? 'Routine Updates: On'
+                  : 'Routine Updates: Off'}
+              </button>
               <button
                 type="button"
                 class="btn-secondary"
@@ -451,15 +503,15 @@ export default function App() {
               fallback={
                 <div class="empty-state">
                   <p>
-                    No messages in the current session. Select a prompt starter below or click
-                    the Ask icon on any ongoing job in the right-hand panel.
+                    No messages in the current session. Use a prompt starter below to create,
+                    update, abort, or remove jobs in PGlite and pg-boss.
                   </p>
                   <button
                     type="button"
                     class="btn-secondary"
                     onClick={() => setMessages(SEEDED_MESSAGES)}
                   >
-                    Restore Operations Brief
+                    Restore Orchestrator Brief
                   </button>
                 </div>
               }
@@ -475,11 +527,13 @@ export default function App() {
                       <span>
                         {message.role === 'user'
                           ? 'Operator'
-                          : 'ECS Modernization Assistant'}
+                          : message.id === ROUTINE_DIGEST_MESSAGE_ID
+                            ? 'Job Sub-Conversation Monitor (pg-boss)'
+                            : 'Job Management Orchestrator'}
                       </span>
                       <span class="tabular-nums">
                         {message.role === 'assistant'
-                          ? `Vercel AI UI · ${modelId() || 'gpt-4o-mini'}`
+                          ? `PGlite · pg-boss · ${modelId() || 'gpt-4o-mini'}`
                           : 'Sent'}
                       </span>
                     </div>
@@ -506,7 +560,7 @@ export default function App() {
               )}
             </Show>
 
-            <div class="prompt-starters" aria-label="Suggested prompts">
+            <div class="prompt-starters" aria-label="Suggested job management commands">
               <For each={PROMPT_STARTERS}>
                 {(starter) => (
                   <button
@@ -534,7 +588,7 @@ export default function App() {
                     onChange={(e) => setAttachSelectedJob(e.currentTarget.checked)}
                   />
                   <span>
-                    Attach active job context (
+                    Attach selected job context (
                     {selectedJob()
                       ? `${selectedJob()!.id} · ${selectedJob()!.code} · ${selectedJob()!.airportIata}`
                       : 'None'}
@@ -548,8 +602,8 @@ export default function App() {
                 <textarea
                   class="composer-input"
                   rows={2}
-                  placeholder="Ask about an ongoing ECS job, ORAT readiness gate, BNATCS radar cutover, or AIP grant drawdown…"
-                  aria-label="Message the ECS assistant"
+                  placeholder="Tell the orchestrator what job to create, update, abort, or remove (e.g. 'Create a W3 job for LAX to evaluate biometric e-gates')…"
+                  aria-label="Message the Job Management Orchestrator"
                   value={inputPrompt()}
                   onInput={(e) => setInputPrompt(e.currentTarget.value)}
                   onKeyDown={(e) => {

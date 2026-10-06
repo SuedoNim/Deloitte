@@ -1,5 +1,6 @@
 import type {
   EcsJob,
+  JobSubChatUpdate,
   ModelConnectionConfig,
   WorkflowCode,
 } from '../types/jobs'
@@ -16,6 +17,7 @@ interface CreateJobPayload {
   code: WorkflowCode
   airportIata: string
   title: string
+  purpose?: string
 }
 
 export interface IEcsApiClient {
@@ -27,6 +29,7 @@ export interface IEcsApiClient {
   subscribeJobsStream(handlers: {
     onOpen: () => void
     onJobsSync: (jobs: EcsJob[]) => void
+    onJobChatUpdate: (update: JobSubChatUpdate) => void
     onError: () => void
   }): () => void
 }
@@ -136,6 +139,7 @@ class HttpEcsApiClient implements IEcsApiClient {
   subscribeJobsStream(handlers: {
     onOpen: () => void
     onJobsSync: (jobs: EcsJob[]) => void
+    onJobChatUpdate: (update: JobSubChatUpdate) => void
     onError: () => void
   }): () => void {
     const eventSource = new EventSource('/api/jobs/stream')
@@ -150,6 +154,17 @@ class HttpEcsApiClient implements IEcsApiClient {
         const parsed = JSON.parse((event as MessageEvent).data) as { jobs?: EcsJob[] }
         if (Array.isArray(parsed.jobs)) {
           handlers.onJobsSync(parsed.jobs)
+        }
+      } catch {
+        // Ignore malformed frame
+      }
+    })
+
+    eventSource.addEventListener('job:chat_update', (event) => {
+      try {
+        const parsed = JSON.parse((event as MessageEvent).data) as JobSubChatUpdate
+        if (parsed?.jobId && parsed?.subConversationMessage) {
+          handlers.onJobChatUpdate(parsed)
         }
       } catch {
         // Ignore malformed frame

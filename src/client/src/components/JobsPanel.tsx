@@ -62,7 +62,7 @@ export function JobsPanel(props: JobsPanelProps) {
     >
       <div class="panel-header">
         <div class="panel-title-row">
-          <h2 class="panel-title">Ongoing Jobs</h2>
+          <h2 class="panel-title">Ongoing Jobs (PGlite · pg-boss)</h2>
           <span class="panel-summary-meta tabular-nums" style={{ margin: 0 }}>
             <span>{props.counts.inProgress} active</span>
             <span aria-hidden="true">·</span>
@@ -193,7 +193,7 @@ export function JobsPanel(props: JobsPanelProps) {
                       <button
                         type="button"
                         class="icon-action-btn btn-ask"
-                        title={`Ask assistant about ${job.id}`}
+                        title={`Ask job manager about ${job.id}`}
                         aria-label={`Ask assistant about ${job.id}`}
                         onClick={(e) => props.onAskAboutJob(job, e)}
                       >
@@ -264,26 +264,32 @@ export function JobsPanel(props: JobsPanelProps) {
                           {job.keyMetricLabel}: {job.keyMetricValue}
                         </span>
                         <span>·</span>
-                        <span>Elapsed: {job.elapsed}</span>
-                        <span>·</span>
                         <span>ETA: {job.eta}</span>
                       </div>
 
-                      <p class="job-details-summary">{job.summary}</p>
+                      <div class="job-purpose-box">
+                        <span class="job-section-label">Single Purpose:</span>{' '}
+                        <span>{job.purpose}</span>
+                      </div>
 
-                      <ul class="job-details-steps">
-                        <For each={job.steps}>
-                          {(step) => (
-                            <li class="job-details-step">
-                              <div class="job-details-step-row">
-                                <span>{step.stage}</span>
-                                <span class="tabular-nums">{step.timestamp}</span>
-                              </div>
-                              <div class="job-details-step-desc">{step.detail}</div>
-                            </li>
-                          )}
-                        </For>
-                      </ul>
+                      <div class="job-subchat-container" aria-label={`${job.id} sub-conversation`}>
+                        <div class="job-section-label">Job LLM Sub-Conversation</div>
+                        <ul class="job-subchat-list">
+                          <For each={job.chatHistory}>
+                            {(msg) => (
+                              <li class={`job-subchat-item role-${msg.role}`}>
+                                <div class="job-subchat-meta tabular-nums">
+                                  <span>
+                                    {msg.role === 'user' ? 'Job Purpose' : 'Job Agent'}
+                                  </span>
+                                  <span>{msg.timestamp}</span>
+                                </div>
+                                <div class="job-subchat-text">{msg.content}</div>
+                              </li>
+                            )}
+                          </For>
+                        </ul>
+                      </div>
                     </div>
                   </Show>
                 </div>

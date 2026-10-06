@@ -8,10 +8,22 @@ export interface ModelConnectionConfig {
   apiToken: string
 }
 
-export interface JobChatMessage {
+interface JobChatMessage {
   id: string
   role: 'system' | 'user' | 'assistant'
   content: string
+  timestamp: string
+}
+
+export interface JobSubChatUpdate {
+  id: string
+  jobId: string
+  code: WorkflowCode
+  airportIata: string
+  title: string
+  status: JobStatus
+  progress: number
+  subConversationMessage: string
   timestamp: string
 }
 

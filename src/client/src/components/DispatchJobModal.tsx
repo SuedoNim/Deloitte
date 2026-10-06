@@ -7,6 +7,7 @@ interface DispatchJobModalProps {
     code: WorkflowCode
     airportIata: string
     title: string
+    purpose: string
   }) => void
 }
 
@@ -14,15 +15,21 @@ export function DispatchJobModal(props: DispatchJobModalProps) {
   const [code, setCode] = createSignal<WorkflowCode>('W4')
   const [airportIata, setAirportIata] = createSignal('JFK')
   const [title, setTitle] = createSignal('')
+  const [purpose, setPurpose] = createSignal('')
 
   const handleSubmit = (e: SubmitEvent) => {
     e.preventDefault()
+    const resolvedTitle =
+      title().trim() || `${code()} Modernization Pipeline (${airportIata()})`
+    const resolvedPurpose =
+      purpose().trim() ||
+      `Execute ${code()} single-purpose LLM analysis and verification for ${airportIata()}: ${resolvedTitle}.`
+
     props.onSubmit({
       code: code(),
       airportIata: airportIata(),
-      title:
-        title().trim() ||
-        `${code()} Modernization Pipeline (${airportIata()})`,
+      title: resolvedTitle,
+      purpose: resolvedPurpose,
     })
   }
 
@@ -35,10 +42,10 @@ export function DispatchJobModal(props: DispatchJobModalProps) {
     >
       <form class="modal-card" onSubmit={handleSubmit}>
         <h2 id="dispatch-modal-title" class="modal-title">
-          Dispatch Ongoing ECS Job
+          Dispatch Single-Purpose LLM Job
         </h2>
         <p class="modal-subtitle">
-          Launch a workflow verification or ingestion job into the right-hand queue.
+          Enqueue a single-purpose LLM chat job into PGlite and pg-boss.
         </p>
 
         <div class="form-field">
@@ -86,13 +93,24 @@ export function DispatchJobModal(props: DispatchJobModalProps) {
         </div>
 
         <div class="form-field">
-          <label for="job-title-input">Job Objective</label>
+          <label for="job-title-input">Job Title</label>
           <input
             id="job-title-input"
             type="text"
             placeholder="e.g. Surface Awareness Initiative ADS-B Cutover Check"
             value={title()}
             onInput={(e) => setTitle(e.currentTarget.value)}
+          />
+        </div>
+
+        <div class="form-field">
+          <label for="job-purpose-input">Single Specific Purpose (Sub-Chat Prompt)</label>
+          <input
+            id="job-purpose-input"
+            type="text"
+            placeholder="e.g. Verify Runway 16R ADS-B fusion latency and calculate delay delta"
+            value={purpose()}
+            onInput={(e) => setPurpose(e.currentTarget.value)}
           />
         </div>
 
