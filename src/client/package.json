@@ -10,6 +10,7 @@
     "knip": "knip"
   },
   "dependencies": {
+    "ai": "^7.0.128",
     "solid-js": "^1.9.15"
   },
   "devDependencies": {

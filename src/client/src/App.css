@@ -1,184 +1,868 @@
-.counter {
-  font-size: 16px;
-  padding: 5px 10px;
-  border-radius: 5px;
-  color: var(--accent);
-  background: var(--accent-bg);
-  border: 2px solid transparent;
-  transition: border-color 0.3s;
-  margin-bottom: 24px;
-
-  &:hover {
-    border-color: var(--accent-border);
-  }
-  &:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-}
-
-.hero {
-  position: relative;
-
-  .base,
-  .framework,
-  .vite {
-    inset-inline: 0;
-    margin: 0 auto;
-  }
-
-  .base {
-    width: 170px;
-    position: relative;
-    z-index: 0;
-  }
-
-  .framework,
-  .vite {
-    position: absolute;
-  }
-
-  .framework {
-    z-index: 1;
-    top: 34px;
-    height: 28px;
-    transform: perspective(2000px) rotateZ(300deg) rotateX(44deg) rotateY(39deg)
-      scale(1.4);
-  }
-
-  .vite {
-    z-index: 0;
-    top: 107px;
-    height: 26px;
-    width: auto;
-    transform: perspective(2000px) rotateZ(300deg) rotateX(40deg) rotateY(39deg)
-      scale(0.8);
-  }
-}
-
-#center {
+.workspace-shell {
   display: flex;
   flex-direction: column;
-  gap: 25px;
-  place-content: center;
-  place-items: center;
-  flex-grow: 1;
-
-  @media (max-width: 1024px) {
-    padding: 32px 20px 24px;
-    gap: 18px;
-  }
+  height: 100svh;
+  width: 100%;
+  overflow: hidden;
+  background: var(--bg-canvas);
 }
 
-#next-steps {
+/* Top Bar Contract: 3 zones */
+.topbar {
   display: flex;
-  border-top: 1px solid var(--border);
+  align-items: center;
+  justify-content: space-between;
+  height: 54px;
+  padding: 0 20px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-hairline);
+  flex-shrink: 0;
+}
+
+.topbar-brand {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.topbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.topbar-link {
+  background: none;
+  border: none;
+  padding: 4px 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  transition: color 150ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.topbar-link:hover {
+  color: var(--text-primary);
+}
+
+.topbar-link.is-active {
+  color: var(--text-primary);
+  font-weight: 600;
+  border-bottom-color: var(--accent-interactive);
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-primary {
+  height: 34px;
+  padding: 0 12px;
+  background: var(--accent-primary);
+  color: #ffffff;
+  border: 1px solid var(--accent-primary);
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: opacity 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-primary:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  height: 32px;
+  padding: 0 10px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+}
+
+.btn-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Main Split Layout: Chat Window on Left (1fr) + Ongoing Jobs Panel on Right (400px) */
+.workspace-body {
+  display: grid;
+  grid-template-columns: 1fr 400px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Left-Hand Main Viewport: Standard Vercel AI UI Chat Window */
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-canvas);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chat-header {
+  padding: 12px 20px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-hairline);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+.chat-header-info {
+  min-width: 0;
+}
+
+.chat-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.chat-subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Collapsible Model Connection Configuration Bar */
+.connection-bar {
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-strong);
+  padding: 12px 20px;
+  flex-shrink: 0;
+}
+
+.connection-grid {
+  max-width: 820px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1.2fr 0.9fr 1.3fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.conn-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.conn-field label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.conn-input-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.conn-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font-size: 12.5px;
+}
+
+.conn-status-row {
+  max-width: 820px;
+  margin: 8px auto 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.chat-message-wrapper {
+  display: flex;
+  flex-direction: column;
+  max-width: 780px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.chat-message-meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chat-bubble {
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1.55;
+  border: 1px solid var(--border-hairline);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.chat-message-wrapper.is-user .chat-bubble {
+  background: #0f172a;
+  color: #f8fafc;
+  border-color: #0f172a;
+}
+
+.chat-message-wrapper.is-user .chat-message-meta {
+  color: var(--text-secondary);
+}
+
+.message-content h3 {
+  margin: 0 0 6px;
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.message-content p {
+  margin: 0 0 6px;
+}
+
+.message-content p:last-child {
+  margin-bottom: 0;
+}
+
+.message-content ul {
+  margin: 4px 0 6px;
+  padding-left: 18px;
+}
+
+.message-content li {
+  margin-bottom: 3px;
+}
+
+.message-content code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.chat-message-wrapper.is-user .message-content code {
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+}
+
+.prompt-starters {
+  max-width: 780px;
+  width: 100%;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.starter-btn {
   text-align: left;
-
-  & > div {
-    flex: 1 1 0;
-    padding: 32px;
-    @media (max-width: 1024px) {
-      padding: 24px 20px;
-    }
-  }
-
-  .icon {
-    margin-bottom: 16px;
-    width: 22px;
-    height: 22px;
-  }
-
-  @media (max-width: 1024px) {
-    flex-direction: column;
-    text-align: center;
-  }
+  padding: 9px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-hairline);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 150ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 150ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-#docs {
-  border-right: 1px solid var(--border);
-
-  @media (max-width: 1024px) {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
+.starter-btn:hover:not(:disabled) {
+  border-color: var(--accent-interactive);
+  color: var(--text-primary);
 }
 
-#next-steps ul {
+.chat-error-banner {
+  max-width: 780px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 10px 14px;
+  background: var(--job-failure-bg);
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  color: var(--job-failure-text);
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Composer Footer */
+.chat-composer-container {
+  padding: 12px 24px 16px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-hairline);
+  flex-shrink: 0;
+}
+
+.chat-composer-inner {
+  max-width: 780px;
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.composer-context-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.composer-context-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.composer-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.composer-input {
+  flex: 1;
+  min-height: 42px;
+  max-height: 110px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 13.5px;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.composer-submit {
+  height: 42px;
+  padding: 0 16px;
+}
+
+/* Right-Hand Ongoing Jobs Panel (Compact, Collapsible) */
+.jobs-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-hairline);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panel-header {
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.panel-summary-meta {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.jobs-controls {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-canvas);
+}
+
+.search-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.segmented-filters {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-subtle);
+  border-radius: 5px;
+}
+
+.filter-tab {
+  flex: 1;
+  height: 24px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 140ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.filter-tab:hover {
+  color: var(--text-primary);
+}
+
+.filter-tab.is-active {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.jobs-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* Compact Job Item */
+.job-item {
+  border-bottom: 1px solid var(--border-hairline);
+  background: var(--bg-surface);
+  transition: background-color 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.job-item.is-selected {
+  background: #f8fafc;
+}
+
+.job-item-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.job-toggle-btn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+/* Smooth Progress Icon with Percentage */
+.job-progress-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.job-progress-badge.status-in_progress {
+  background: var(--job-in-progress-bg);
+  color: var(--job-in-progress-text);
+}
+
+.job-progress-badge.status-completed {
+  background: var(--job-complete-bg);
+  color: var(--job-complete-text);
+}
+
+.job-progress-badge.status-failed {
+  background: var(--job-failure-bg);
+  color: var(--job-failure-text);
+}
+
+.progress-ring-svg {
+  width: 18px;
+  height: 18px;
+  transform: rotate(-90deg);
+  flex-shrink: 0;
+}
+
+.progress-ring-track {
+  fill: none;
+  stroke: rgba(15, 23, 42, 0.12);
+  stroke-width: 2.6;
+}
+
+.progress-ring-fill {
+  fill: none;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 320ms cubic-bezier(0.16, 1, 0.3, 1),
+    stroke 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.progress-ring-fill.status-in_progress {
+  stroke: var(--job-in-progress);
+}
+
+.progress-ring-fill.status-completed {
+  stroke: var(--job-complete);
+}
+
+.progress-ring-fill.status-failed {
+  stroke: var(--job-failure);
+}
+
+.job-main-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.job-compact-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.25;
+}
+
+.job-compact-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+
+.job-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.job-chevron.is-open {
+  transform: rotate(90deg);
+}
+
+/* Per-Item Ask + Abort Icon Buttons */
+.job-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.icon-action-btn {
+  height: 26px;
+  padding: 0 7px;
+  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 140ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 140ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.icon-action-btn:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+}
+
+.icon-action-btn.btn-ask:hover:not(:disabled) {
+  border-color: var(--accent-interactive);
+  color: var(--accent-interactive);
+}
+
+.icon-action-btn.btn-abort:hover:not(:disabled) {
+  background: var(--job-failure-bg);
+  border-color: #fca5a5;
+  color: var(--job-failure);
+}
+
+.icon-action-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+/* Smooth Thin Bottom Progress Bar on Each Compact Job Item */
+.job-mini-progress-track {
+  height: 2px;
+  width: 100%;
+  background: var(--bg-subtle);
+  overflow: hidden;
+}
+
+.job-mini-progress-fill {
+  height: 100%;
+  transform-origin: left center;
+  transition: transform 320ms cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.job-mini-progress-fill.status-in_progress {
+  background: var(--job-in-progress);
+}
+
+.job-mini-progress-fill.status-completed {
+  background: var(--job-complete);
+}
+
+.job-mini-progress-fill.status-failed {
+  background: var(--job-failure);
+}
+
+/* Collapsible Inline Job Details */
+.job-details-collapse {
+  padding: 8px 12px 10px 16px;
+  background: var(--bg-canvas);
+  border-top: 1px dashed var(--border-hairline);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.job-details-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+}
+
+.job-details-summary {
+  margin: 0 0 8px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.job-details-steps {
   list-style: none;
   padding: 0;
+  margin: 0;
   display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.job-details-step {
+  padding: 4px 7px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-hairline);
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.job-details-step-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.job-details-step-desc {
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.empty-state {
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: 8px;
-  margin: 32px 0 0;
-
-  .logo {
-    height: 18px;
-  }
-
-  a {
-    color: var(--text-h);
-    font-size: 16px;
-    border-radius: 6px;
-    background: var(--social-bg);
-    display: flex;
-    padding: 6px 12px;
-    align-items: center;
-    gap: 8px;
-    text-decoration: none;
-    transition: box-shadow 0.3s;
-
-    &:hover {
-      box-shadow: var(--shadow);
-    }
-    .button-icon {
-      height: 18px;
-      width: 18px;
-    }
-  }
-
-  @media (max-width: 1024px) {
-    margin-top: 20px;
-    flex-wrap: wrap;
-    justify-content: center;
-
-    li {
-      flex: 1 1 calc(50% - 8px);
-    }
-
-    a {
-      width: 100%;
-      justify-content: center;
-      box-sizing: border-box;
-    }
-  }
 }
 
-#spacer {
-  height: 88px;
-  border-top: 1px solid var(--border);
-  @media (max-width: 1024px) {
-    height: 48px;
-  }
+/* Modal Dialog */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 50;
 }
 
-.ticks {
-  position: relative;
+.modal-card {
   width: 100%;
+  max-width: 440px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-hairline);
+  border-radius: 8px;
+  padding: 18px 22px;
+}
 
-  &::before,
-  &::after {
-    content: '';
-    position: absolute;
-    top: -4.5px;
-    border: 5px solid transparent;
+.modal-title {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.modal-subtitle {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.form-field label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.form-field input,
+.form-field select {
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+@media (max-width: 960px) {
+  .workspace-body {
+    grid-template-columns: 1fr;
   }
 
-  &::before {
-    left: 0;
-    border-left-color: var(--border);
+  .connection-grid {
+    grid-template-columns: 1fr;
   }
-  &::after {
-    right: 0;
-    border-right-color: var(--border);
+
+  .jobs-panel.mobile-hidden,
+  .chat-panel.mobile-hidden {
+    display: none;
+  }
+
+  .prompt-starters {
+    grid-template-columns: 1fr;
   }
 }
