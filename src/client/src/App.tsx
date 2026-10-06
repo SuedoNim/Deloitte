@@ -1,6 +1,12 @@
 import { createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 import type { UIMessage } from 'ai'
 import { createVercelChat, getMessageText } from './lib/chat'
+import { createClientLogger, type IClientLogger } from './lib/logger'
+import { createEcsApiClient, type IEcsApiClient } from './services/api-client'
+import { TopBar } from './components/TopBar'
+import { ConnectionBar } from './components/ConnectionBar'
+import { JobsPanel } from './components/JobsPanel'
+import { DispatchJobModal } from './components/DispatchJobModal'
 import {
   INITIAL_ECS_JOBS,
   type EcsJob,
@@ -67,40 +73,10 @@ function renderFormattedText(raw: string) {
   )
 }
 
-function JobProgressIcon(props: { progress: number; status: JobStatus }) {
-  const radius = 6.5
-  const circumference = 2 * Math.PI * radius
-  const dashOffset = () =>
-    circumference - (Math.max(0, Math.min(100, props.progress)) / 100) * circumference
-
-  return (
-    <span
-      class={`job-progress-badge status-${props.status} tabular-nums`}
-      title={
-        props.status === 'in_progress'
-          ? `In progress: ${props.progress}%`
-          : props.status === 'completed'
-            ? `Complete: ${props.progress}%`
-            : `Failure: ${props.progress}%`
-      }
-    >
-      <svg class="progress-ring-svg" viewBox="0 0 18 18" aria-hidden="true">
-        <circle class="progress-ring-track" cx="9" cy="9" r={radius} />
-        <circle
-          class={`progress-ring-fill status-${props.status}`}
-          cx="9"
-          cy="9"
-          r={radius}
-          stroke-dasharray={`${circumference} ${circumference}`}
-          stroke-dashoffset={dashOffset()}
-        />
-      </svg>
-      <span>{props.progress}%</span>
-    </span>
-  )
-}
-
 export default function App() {
+  const clientLogger: IClientLogger = createClientLogger('/api/logs/client')
+  const apiClient: IEcsApiClient = createEcsApiClient(clientLogger)
+
   const [jobs, setJobs] = createSignal<EcsJob[]>(INITIAL_ECS_JOBS)
   const [selectedJobId, setSelectedJobId] = createSignal<string>(INITIAL_ECS_JOBS[0].id)
   const [expandedJobIds, setExpandedJobIds] = createSignal<Record<string, boolean>>({
@@ -112,21 +88,14 @@ export default function App() {
   const [attachSelectedJob, setAttachSelectedJob] = createSignal(true)
   const [mobileView, setMobileView] = createSignal<'split' | 'jobs' | 'chat'>('split')
   const [isDispatchModalOpen, setIsDispatchModalOpen] = createSignal(false)
-  const [serverStreamConnected, setServerStreamConnected] = createSignal(false)
 
-  // Model Connection Settings State (synced with server /api/connection)
+  // Model Connection Settings State
   const [showConnectionBar, setShowConnectionBar] = createSignal(true)
-  const [showApiToken, setShowApiToken] = createSignal(false)
   const [baseUrl, setBaseUrl] = createSignal('https://api.openai.com/v1')
   const [modelId, setModelId] = createSignal('gpt-4o-mini')
   const [apiToken, setApiToken] = createSignal('')
   const [serverHasToken, setServerHasToken] = createSignal(false)
   const [connectionSavedNotice, setConnectionSavedNotice] = createSignal('')
-
-  // New job dispatch form state
-  const [newJobCode, setNewJobCode] = createSignal<WorkflowCode>('W4')
-  const [newJobAirport, setNewJobAirport] = createSignal('JFK')
-  const [newJobTitle, setNewJobTitle] = createSignal('')
 
   const connectionConfig = createMemo<ModelConnectionConfig>(() => ({
     baseUrl: baseUrl().trim(),
@@ -150,6 +119,9 @@ export default function App() {
   } = createVercelChat({
     api: '/api/chat',
     messages: SEEDED_MESSAGES,
+    onError: (err) => {
+      clientLogger.error('client.chat_stream_error', { message: err.message })
+    },
   })
 
   let messagesEndRef: HTMLDivElement | undefined
@@ -161,7 +133,8 @@ export default function App() {
   }
 
   onMount(() => {
-    // 1. Load saved local connection settings and sync with server /api/connection
+    clientLogger.info('client.app_mounted')
+
     let localConnection: Partial<ModelConnectionConfig> | null = null
     try {
       const saved = window.localStorage.getItem(STORAGE_KEY_CONNECTION)
@@ -172,81 +145,47 @@ export default function App() {
         if (typeof localConnection.apiToken === 'string') setApiToken(localConnection.apiToken)
       }
     } catch {
-      // Ignore storage errors
+      // Ignore storage restrictions
     }
 
-    fetch('/api/connection')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((serverConn) => {
-        if (!serverConn) return
-        if (!localConnection?.baseUrl && serverConn.baseUrl) {
-          setBaseUrl(serverConn.baseUrl)
-        }
-        if (!localConnection?.modelId && serverConn.modelId) {
-          setModelId(serverConn.modelId)
-        }
-        setServerHasToken(Boolean(serverConn.hasToken))
+    apiClient.fetchConnection().then((serverConn) => {
+      if (!serverConn) return
+      if (!localConnection?.baseUrl && serverConn.baseUrl) {
+        setBaseUrl(serverConn.baseUrl)
+      }
+      if (!localConnection?.modelId && serverConn.modelId) {
+        setModelId(serverConn.modelId)
+      }
+      setServerHasToken(Boolean(serverConn.hasToken))
 
-        // If client had stored credentials in localStorage, push them to the server session
-        if (localConnection?.apiToken || localConnection?.baseUrl || localConnection?.modelId) {
-          fetch('/api/connection', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              baseUrl: baseUrl(),
-              modelId: modelId(),
-              apiToken: apiToken(),
-            }),
-          })
-            .then((r) => (r.ok ? r.json() : null))
-            .then((updated) => {
-              if (updated) setServerHasToken(Boolean(updated.hasToken))
-            })
-            .catch(() => {})
-        }
-      })
-      .catch(() => {})
-
-    // 2. Fetch authoritative initial jobs list from server
-    fetch('/api/jobs')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.jobs?.length) {
-          setJobs(data.jobs)
-        }
-      })
-      .catch(() => {})
-
-    // 3. Subscribe to live server SSE stream (/api/jobs/stream) for real-time job state sync
-    const eventSource = new EventSource('/api/jobs/stream')
-
-    eventSource.onopen = () => {
-      setServerStreamConnected(true)
-    }
-
-    eventSource.addEventListener('jobs:sync', (event) => {
-      try {
-        const parsed = JSON.parse((event as MessageEvent).data) as { jobs?: EcsJob[] }
-        if (Array.isArray(parsed.jobs)) {
-          setJobs(parsed.jobs)
-          setServerStreamConnected(true)
-        }
-      } catch {
-        // Ignore malformed frame
+      if (localConnection?.apiToken || localConnection?.baseUrl || localConnection?.modelId) {
+        apiClient.saveConnection(connectionConfig()).then((updated) => {
+          if (updated) setServerHasToken(Boolean(updated.hasToken))
+        })
       }
     })
 
-    eventSource.onerror = () => {
-      setServerStreamConnected(false)
-    }
+    apiClient.fetchJobs().then((serverJobs) => {
+      if (serverJobs?.length) {
+        setJobs(serverJobs)
+      }
+    })
+
+    const unsubscribeSse = apiClient.subscribeJobsStream({
+      onOpen: () => {},
+      onJobsSync: (syncedJobs) => {
+        setJobs(syncedJobs)
+      },
+      onError: () => {},
+    })
 
     onCleanup(() => {
-      eventSource.close()
+      unsubscribeSse()
     })
   })
 
-  const saveConnectionSettings = async (e?: Event) => {
-    e?.preventDefault()
+  const saveConnectionSettings = async (e: SubmitEvent) => {
+    e.preventDefault()
     const current = connectionConfig()
     try {
       window.localStorage.setItem(STORAGE_KEY_CONNECTION, JSON.stringify(current))
@@ -254,20 +193,11 @@ export default function App() {
       // Ignore storage restrictions
     }
 
-    try {
-      const res = await fetch('/api/connection', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(current),
-      })
-      if (res.ok) {
-        const updated = await res.json()
-        setServerHasToken(Boolean(updated.hasToken))
-        setConnectionSavedNotice('Synced with server')
-      } else {
-        setConnectionSavedNotice('Saved locally')
-      }
-    } catch {
+    const updated = await apiClient.saveConnection(current)
+    if (updated) {
+      setServerHasToken(Boolean(updated.hasToken))
+      setConnectionSavedNotice('Synced with server')
+    } else {
       setConnectionSavedNotice('Saved locally')
     }
 
@@ -276,10 +206,14 @@ export default function App() {
 
   const toggleJobExpanded = (jobId: string) => {
     setSelectedJobId(jobId)
-    setExpandedJobIds((prev) => ({
-      ...prev,
-      [jobId]: !prev[jobId],
-    }))
+    setExpandedJobIds((prev) => {
+      const next = !prev[jobId]
+      clientLogger.info('client.job_details_toggled', { jobId, expanded: next })
+      return {
+        ...prev,
+        [jobId]: next,
+      }
+    })
   }
 
   const selectedJob = createMemo(
@@ -339,6 +273,11 @@ export default function App() {
         ? `[Context: ${activeJob.id} · ${activeJob.code} · ${activeJob.airportIata} (${activeJob.ecsSystem})]\n${trimmed}`
         : trimmed
 
+    clientLogger.info('client.chat_message_submitted', {
+      attachedJobId: attachSelectedJob() ? activeJob?.id : null,
+      promptLength: trimmed.length,
+    })
+
     setInputPrompt('')
     if (mobileView() === 'jobs') {
       setMobileView('chat')
@@ -355,6 +294,11 @@ export default function App() {
   const handleAskAboutJob = async (job: EcsJob, e: MouseEvent) => {
     e.stopPropagation()
     setSelectedJobId(job.id)
+    clientLogger.info('client.job_ask_clicked', {
+      jobId: job.id,
+      status: job.status,
+      progress: job.progress,
+    })
     if (mobileView() === 'jobs') {
       setMobileView('chat')
     }
@@ -371,7 +315,6 @@ export default function App() {
     e.stopPropagation()
     if (job.status !== 'in_progress') return
 
-    // Optimistic update reconciled with authoritative POST /api/jobs/:id/abort
     const previousJobs = jobs()
     setJobs((prev) =>
       prev.map((item) =>
@@ -386,112 +329,44 @@ export default function App() {
       ),
     )
 
-    try {
-      const res = await fetch(`/api/jobs/${job.id}/abort`, {
-        method: 'POST',
-      })
-      if (res.ok) {
-        const data = await res.json()
-        if (Array.isArray(data?.jobs)) {
-          setJobs(data.jobs)
-        }
-      } else {
-        setJobs(previousJobs)
-      }
-    } catch {
-      // Keep optimistic state if offline
+    const result = await apiClient.abortJob(job.id)
+    if (result?.jobs) {
+      setJobs(result.jobs)
+    } else if (!result) {
+      setJobs(previousJobs)
     }
   }
 
-  const handleCreateJob = async (e: SubmitEvent) => {
-    e.preventDefault()
-    const payload = {
-      code: newJobCode(),
-      airportIata: newJobAirport(),
-      title:
-        newJobTitle().trim() ||
-        `${newJobCode()} Modernization Pipeline (${newJobAirport()})`,
+  const handleCreateJob = async (payload: {
+    code: WorkflowCode
+    airportIata: string
+    title: string
+  }) => {
+    const result = await apiClient.createJob(payload)
+    if (result?.jobs) {
+      setJobs(result.jobs)
+    } else if (result?.job) {
+      setJobs((prev) => [result.job!, ...prev])
     }
-
-    try {
-      const res = await fetch('/api/jobs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        if (Array.isArray(data?.jobs)) {
-          setJobs(data.jobs)
-        } else if (data?.job) {
-          setJobs((prev) => [data.job, ...prev])
-        }
-        if (data?.job?.id) {
-          setSelectedJobId(data.job.id)
-          setExpandedJobIds((prev) => ({ ...prev, [data.job.id]: true }))
-        }
-      }
-    } catch {
-      // Ignore network error
+    if (result?.job?.id) {
+      setSelectedJobId(result.job.id)
+      setExpandedJobIds((prev) => ({ ...prev, [result.job!.id]: true }))
     }
-
-    setNewJobTitle('')
     setIsDispatchModalOpen(false)
   }
 
   return (
     <div class="workspace-shell">
-      {/* Top Bar Contract: Zone 1 (Brand) — Zone 2 (Nav Links) — Zone 3 (Primary Actions) */}
-      <header class="topbar">
-        <a href="#top" class="topbar-brand">
-          Deloitte Airport Modernization
-        </a>
+      <TopBar
+        mobileView={mobileView()}
+        totalJobs={jobCounts().total}
+        showConnectionBar={showConnectionBar()}
+        onSelectView={(v) => setMobileView(v)}
+        onToggleConnectionBar={() => setShowConnectionBar((v) => !v)}
+        onOpenDispatchModal={() => setIsDispatchModalOpen(true)}
+      />
 
-        <nav class="topbar-nav" aria-label="Workspace navigation">
-          <button
-            type="button"
-            class={`topbar-link ${mobileView() === 'split' ? 'is-active' : ''}`}
-            onClick={() => setMobileView('split')}
-          >
-            Workspace
-          </button>
-          <button
-            type="button"
-            class={`topbar-link ${mobileView() === 'chat' ? 'is-active' : ''}`}
-            onClick={() => setMobileView('chat')}
-          >
-            LLM Chat
-          </button>
-          <button
-            type="button"
-            class={`topbar-link ${mobileView() === 'jobs' ? 'is-active' : ''}`}
-            onClick={() => setMobileView('jobs')}
-          >
-            Ongoing Jobs ({jobCounts().total})
-          </button>
-          <button
-            type="button"
-            class={`topbar-link ${showConnectionBar() ? 'is-active' : ''}`}
-            onClick={() => setShowConnectionBar((v) => !v)}
-          >
-            Model Connection
-          </button>
-        </nav>
-
-        <div class="topbar-actions">
-          <button
-            type="button"
-            class="btn-primary"
-            onClick={() => setIsDispatchModalOpen(true)}
-          >
-            + Dispatch Job
-          </button>
-        </div>
-      </header>
-
-      {/* Main Split Workspace: Chat Window on Left + Compact Ongoing Jobs on Right */}
       <div class="workspace-body">
-        {/* Left-Hand Main Viewport: Standard Vercel AI UI Chat Window */}
         <main
           class={`chat-panel ${mobileView() === 'jobs' ? 'mobile-hidden' : ''}`}
           aria-label="ECS LLM Chat Window"
@@ -556,75 +431,18 @@ export default function App() {
             </div>
           </div>
 
-          {/* User-Provided Model Connection Bar (synced to /api/connection & /api/chat) */}
           <Show when={showConnectionBar()}>
-            <form
-              class="connection-bar"
-              aria-label="Model Connection Configuration"
-              onSubmit={saveConnectionSettings}
-            >
-              <div class="connection-grid">
-                <div class="conn-field">
-                  <label for="conn-base-url">Model Endpoint / Base URL</label>
-                  <input
-                    id="conn-base-url"
-                    type="url"
-                    class="conn-input tabular-nums"
-                    placeholder="https://api.openai.com/v1"
-                    value={baseUrl()}
-                    onInput={(e) => setBaseUrl(e.currentTarget.value)}
-                  />
-                </div>
-
-                <div class="conn-field">
-                  <label for="conn-model-id">Model Name</label>
-                  <input
-                    id="conn-model-id"
-                    type="text"
-                    class="conn-input tabular-nums"
-                    placeholder="gpt-4o-mini"
-                    value={modelId()}
-                    onInput={(e) => setModelId(e.currentTarget.value)}
-                  />
-                </div>
-
-                <div class="conn-field">
-                  <label for="conn-api-token">API Token</label>
-                  <div class="conn-input-group">
-                    <input
-                      id="conn-api-token"
-                      type={showApiToken() ? 'text' : 'password'}
-                      class="conn-input tabular-nums"
-                      placeholder="sk-..."
-                      value={apiToken()}
-                      onInput={(e) => setApiToken(e.currentTarget.value)}
-                    />
-                    <button
-                      type="button"
-                      class="btn-secondary"
-                      onClick={() => setShowApiToken((v) => !v)}
-                    >
-                      {showApiToken() ? 'Hide' : 'Show'}
-                    </button>
-                  </div>
-                </div>
-
-                <button type="submit" class="btn-primary">
-                  Save Connection
-                </button>
-              </div>
-
-              <div class="conn-status-row">
-                <span>
-                  {hasActiveToken()
-                    ? `Live LLM credentials synced with server for ${modelId() || 'gpt-4o-mini'} via ${baseUrl() || 'default endpoint'}.`
-                    : 'Provide your API token and endpoint above to connect the server to your LLM provider.'}
-                </span>
-                <Show when={connectionSavedNotice()}>
-                  <span class="tabular-nums">{connectionSavedNotice()}</span>
-                </Show>
-              </div>
-            </form>
+            <ConnectionBar
+              baseUrl={baseUrl()}
+              modelId={modelId()}
+              apiToken={apiToken()}
+              hasActiveToken={hasActiveToken()}
+              savedNotice={connectionSavedNotice()}
+              onBaseUrlChange={setBaseUrl}
+              onModelIdChange={setModelId}
+              onApiTokenChange={setApiToken}
+              onSave={saveConnectionSettings}
+            />
           </Show>
 
           <div class="chat-messages" role="log" aria-live="polite">
@@ -753,316 +571,27 @@ export default function App() {
           </div>
         </main>
 
-        {/* Right-Hand Panel: Compact Ongoing ECS Jobs with Collapsible Details */}
-        <aside
-          class={`jobs-panel ${mobileView() === 'chat' ? 'mobile-hidden' : ''}`}
-          aria-label="Ongoing ECS Jobs"
-        >
-          <div class="panel-header">
-            <div class="panel-title-row">
-              <h2 class="panel-title">Ongoing Jobs</h2>
-              <span class="panel-summary-meta tabular-nums" style={{ margin: 0 }}>
-                <span>{jobCounts().inProgress} active</span>
-                <span aria-hidden="true">·</span>
-                <span>{jobCounts().completed} done</span>
-                <span aria-hidden="true">·</span>
-                <span>{jobCounts().failed} failed</span>
-              </span>
-            </div>
-            <div class="panel-summary-meta">
-              <span>{serverStreamConnected() ? 'Live SSE Sync' : 'HTTP Sync'}</span>
-              <span aria-hidden="true">·</span>
-              <span>Yellow: In Progress</span>
-              <span aria-hidden="true">·</span>
-              <span>Green: Complete</span>
-              <span aria-hidden="true">·</span>
-              <span>Red: Failure</span>
-            </div>
-          </div>
-
-          <div class="jobs-controls">
-            <input
-              type="search"
-              class="search-input"
-              placeholder="Search jobs (JFK, DEN, W4, JOB-4091)…"
-              aria-label="Search ongoing jobs"
-              value={searchQuery()}
-              onInput={(e) => setSearchQuery(e.currentTarget.value)}
-            />
-
-            <div class="segmented-filters" role="tablist" aria-label="Filter jobs by status">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={statusFilter() === 'all'}
-                class={`filter-tab ${statusFilter() === 'all' ? 'is-active' : ''}`}
-                onClick={() => setStatusFilter('all')}
-              >
-                All ({jobCounts().total})
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={statusFilter() === 'in_progress'}
-                class={`filter-tab ${statusFilter() === 'in_progress' ? 'is-active' : ''}`}
-                onClick={() => setStatusFilter('in_progress')}
-              >
-                In Progress ({jobCounts().inProgress})
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={statusFilter() === 'completed'}
-                class={`filter-tab ${statusFilter() === 'completed' ? 'is-active' : ''}`}
-                onClick={() => setStatusFilter('completed')}
-              >
-                Complete ({jobCounts().completed})
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={statusFilter() === 'failed'}
-                class={`filter-tab ${statusFilter() === 'failed' ? 'is-active' : ''}`}
-                onClick={() => setStatusFilter('failed')}
-              >
-                Failure ({jobCounts().failed})
-              </button>
-            </div>
-          </div>
-
-          <div class="jobs-list" role="list">
-            <Show
-              when={filteredJobs().length > 0}
-              fallback={
-                <div class="empty-state">
-                  <p>No ongoing jobs match your current filter.</p>
-                  <button
-                    type="button"
-                    class="btn-secondary"
-                    onClick={() => {
-                      setStatusFilter('all')
-                      setSearchQuery('')
-                    }}
-                  >
-                    Reset Filters
-                  </button>
-                </div>
-              }
-            >
-              <For each={filteredJobs()}>
-                {(job) => {
-                  const isExpanded = () => Boolean(expandedJobIds()[job.id])
-                  return (
-                    <div
-                      role="listitem"
-                      class={`job-item ${selectedJob()?.id === job.id ? 'is-selected' : ''}`}
-                    >
-                      <div class="job-item-bar">
-                        <button
-                          type="button"
-                          class="job-toggle-btn"
-                          aria-expanded={isExpanded()}
-                          onClick={() => toggleJobExpanded(job.id)}
-                        >
-                          <svg
-                            class={`job-chevron ${isExpanded() ? 'is-open' : ''}`}
-                            viewBox="0 0 16 16"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            aria-hidden="true"
-                          >
-                            <path d="M6 4l4 4-4 4" stroke-linecap="round" stroke-linejoin="round" />
-                          </svg>
-
-                          <JobProgressIcon progress={job.progress} status={job.status} />
-
-                          <div class="job-main-text">
-                            <div class="job-compact-title">{job.title}</div>
-                            <div class="job-compact-meta tabular-nums">
-                              {job.id} · {job.code} · {job.airportIata} · {job.ecsSystem}
-                            </div>
-                          </div>
-                        </button>
-
-                        <div class="job-item-actions">
-                          <button
-                            type="button"
-                            class="icon-action-btn btn-ask"
-                            title={`Ask assistant about ${job.id}`}
-                            aria-label={`Ask assistant about ${job.id}`}
-                            onClick={(e) => handleAskAboutJob(job, e)}
-                          >
-                            <svg
-                              width="13"
-                              height="13"
-                              viewBox="0 0 16 16"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="1.75"
-                              aria-hidden="true"
-                            >
-                              <path
-                                d="M2.5 3.5h11v7h-7l-3.5 2.5v-2.5h-.5v-7z"
-                                stroke-linejoin="round"
-                              />
-                            </svg>
-                            <span>Ask</span>
-                          </button>
-
-                          <button
-                            type="button"
-                            class="icon-action-btn btn-abort"
-                            disabled={job.status !== 'in_progress'}
-                            title={
-                              job.status === 'in_progress'
-                                ? `Abort ${job.id}`
-                                : `${job.id} is already ${job.status}`
-                            }
-                            aria-label={`Abort ${job.id}`}
-                            onClick={(e) => handleAbortJob(job, e)}
-                          >
-                            <svg
-                              width="13"
-                              height="13"
-                              viewBox="0 0 16 16"
-                              fill="none"
-                              stroke="currentColor"
-                              stroke-width="1.75"
-                              aria-hidden="true"
-                            >
-                              <circle cx="8" cy="8" r="5.5" />
-                              <path d="M5.75 5.75l4.5 4.5M10.25 5.75l-4.5 4.5" stroke-linecap="round" />
-                            </svg>
-                            <span>Abort</span>
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Smooth bottom progress bar matching Yellow / Green / Red state */}
-                      <div class="job-mini-progress-track" aria-hidden="true">
-                        <div
-                          class={`job-mini-progress-fill status-${job.status}`}
-                          style={{
-                            transform: `scaleX(${Math.max(0.03, job.progress / 100)})`,
-                          }}
-                        />
-                      </div>
-
-                      {/* Collapsible Details Section */}
-                      <Show when={isExpanded()}>
-                        <div class="job-details-collapse">
-                          <div class="job-details-grid tabular-nums">
-                            <span>State: {job.lifecycleState}</span>
-                            <span>·</span>
-                            <span>
-                              {job.keyMetricLabel}: {job.keyMetricValue}
-                            </span>
-                            <span>·</span>
-                            <span>Elapsed: {job.elapsed}</span>
-                            <span>·</span>
-                            <span>ETA: {job.eta}</span>
-                          </div>
-
-                          <p class="job-details-summary">{job.summary}</p>
-
-                          <ul class="job-details-steps">
-                            <For each={job.steps}>
-                              {(step) => (
-                                <li class="job-details-step">
-                                  <div class="job-details-step-row">
-                                    <span>{step.stage}</span>
-                                    <span class="tabular-nums">{step.timestamp}</span>
-                                  </div>
-                                  <div class="job-details-step-desc">{step.detail}</div>
-                                </li>
-                              )}
-                            </For>
-                          </ul>
-                        </div>
-                      </Show>
-                    </div>
-                  )
-                }}
-              </For>
-            </Show>
-          </div>
-        </aside>
+        <JobsPanel
+          jobs={filteredJobs()}
+          selectedJobId={selectedJob()?.id ?? ''}
+          expandedJobIds={expandedJobIds()}
+          statusFilter={statusFilter()}
+          searchQuery={searchQuery()}
+          counts={jobCounts()}
+          hiddenOnMobile={mobileView() === 'chat'}
+          onSearchChange={setSearchQuery}
+          onFilterChange={setStatusFilter}
+          onToggleExpand={toggleJobExpanded}
+          onAskAboutJob={handleAskAboutJob}
+          onAbortJob={handleAbortJob}
+        />
       </div>
 
-      {/* Dispatch New ECS Job Modal */}
       <Show when={isDispatchModalOpen()}>
-        <div
-          class="modal-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="dispatch-modal-title"
-        >
-          <form class="modal-card" onSubmit={handleCreateJob}>
-            <h2 id="dispatch-modal-title" class="modal-title">
-              Dispatch Ongoing ECS Job
-            </h2>
-            <p class="modal-subtitle">
-              Launch a workflow verification or ingestion job into the right-hand queue.
-            </p>
-
-            <div class="form-field">
-              <label for="job-workflow-select">ECS Workflow (W1–W7)</label>
-              <select
-                id="job-workflow-select"
-                value={newJobCode()}
-                onChange={(e) => setNewJobCode(e.currentTarget.value as WorkflowCode)}
-              >
-                <option value="W1">W1 · Funding & Grant Lifecycle (FundingSystem)</option>
-                <option value="W2">W2 · Capital Project Delivery & ORAT (ProjectLifecycleSystem)</option>
-                <option value="W3">W3 · Passenger Journey Modernization (PassengerFlowSystem)</option>
-                <option value="W4">W4 · ATC & Airfield Modernization (ATCDeploymentSystem)</option>
-                <option value="W5">W5 · Sustainability & Energy Transition (SustainabilitySystem)</option>
-                <option value="W6">W6 · Smart-Tech Adoption Maturity (MaturitySystem)</option>
-                <option value="W7">W7 · Realtime Data Compilation (IngestionSystem)</option>
-              </select>
-            </div>
-
-            <div class="form-field">
-              <label for="job-airport-select">Target Airport Entity (IATA)</label>
-              <select
-                id="job-airport-select"
-                value={newJobAirport()}
-                onChange={(e) => setNewJobAirport(e.currentTarget.value)}
-              >
-                <option value="JFK">JFK · John F. Kennedy International (KJFK)</option>
-                <option value="DEN">DEN · Denver International (KDEN)</option>
-                <option value="LAX">LAX · Los Angeles International (KLAX)</option>
-                <option value="ORD">ORD · Chicago O’Hare International (KORD)</option>
-                <option value="DEL">DEL · Indira Gandhi International T3 (VIDP)</option>
-              </select>
-            </div>
-
-            <div class="form-field">
-              <label for="job-title-input">Job Objective</label>
-              <input
-                id="job-title-input"
-                type="text"
-                placeholder="e.g. Surface Awareness Initiative ADS-B Cutover Check"
-                value={newJobTitle()}
-                onInput={(e) => setNewJobTitle(e.currentTarget.value)}
-              />
-            </div>
-
-            <div class="modal-actions">
-              <button
-                type="button"
-                class="btn-secondary"
-                onClick={() => setIsDispatchModalOpen(false)}
-              >
-                Cancel
-              </button>
-              <button type="submit" class="btn-primary">
-                Dispatch Job
-              </button>
-            </div>
-          </form>
-        </div>
+        <DispatchJobModal
+          onClose={() => setIsDispatchModalOpen(false)}
+          onSubmit={handleCreateJob}
+        />
       </Show>
     </div>
   )

@@ -63,6 +63,10 @@ debug-client:
 health:
     curl -fsS "http://localhost:{{port}}/api/health" && echo ""
 
+# Tail client and server log files in ./logs
+logs:
+    tail -n 50 logs/server.log logs/client.log
+
 # Start the unified production server (serves built frontend + Hono API)
 serve:
     PORT={{port}} npm run start
