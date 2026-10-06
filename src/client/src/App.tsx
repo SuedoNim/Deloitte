@@ -22,13 +22,13 @@ const SEEDED_MESSAGES: UIMessage[] = [
         text: [
           '### Airport Modernization ECS — Operations & Job Assistant',
           '',
-          'Connected to the Vercel AI SDK UI stream (`/api/chat`). Configure your **API Token** and **Model Connection** endpoint in the connection bar above, or inspect the compact **Ongoing ECS Jobs** panel on the right:',
+          'Connected to the Hono server (`/api/chat`, `/api/jobs/stream`, `/api/connection`). Configure your **API Token** and **Model Connection** endpoint in the connection bar above, or inspect the server-synced **Ongoing ECS Jobs** panel on the right:',
           '',
-          '- **In Progress (Yellow)**: `JOB-4091` (DEN · 74%), `JOB-4094` (DEL · 62%), `JOB-4096` (LAX · 48%), `JOB-4085` (ORD · 31%)',
+          '- **In Progress (Yellow)**: `JOB-4091` (DEN · BNATCS Surface Radar), `JOB-4094` (DEL · Biometric Self-Bag-Drop), `JOB-4096` (LAX · SWIM SFDPS Sync), `JOB-4085` (ORD · AIP Grant Drawdown)',
           '- **Complete (Green)**: `JOB-4079` (DEN · 100% Gate Electrification Glidepath)',
           '- **Failure (Red)**: `JOB-4088` (JFK · 91% ORAT Gate Hold on CyberResilienceCheck)',
           '',
-          'Use the **Ask** icon button on any job item to query its telemetry, or the **Abort** icon button next to it to halt an active run.',
+          'Use the **Ask** icon button on any job item to query its live server telemetry, or the **Abort** icon button next to it to halt an active run.',
         ].join('\n'),
       },
     ],
@@ -112,13 +112,15 @@ export default function App() {
   const [attachSelectedJob, setAttachSelectedJob] = createSignal(true)
   const [mobileView, setMobileView] = createSignal<'split' | 'jobs' | 'chat'>('split')
   const [isDispatchModalOpen, setIsDispatchModalOpen] = createSignal(false)
+  const [serverStreamConnected, setServerStreamConnected] = createSignal(false)
 
-  // Model Connection Settings State (API Token, Base URL, Model ID)
+  // Model Connection Settings State (synced with server /api/connection)
   const [showConnectionBar, setShowConnectionBar] = createSignal(true)
   const [showApiToken, setShowApiToken] = createSignal(false)
   const [baseUrl, setBaseUrl] = createSignal('https://api.openai.com/v1')
   const [modelId, setModelId] = createSignal('gpt-4o-mini')
   const [apiToken, setApiToken] = createSignal('')
+  const [serverHasToken, setServerHasToken] = createSignal(false)
   const [connectionSavedNotice, setConnectionSavedNotice] = createSignal('')
 
   // New job dispatch form state
@@ -131,6 +133,10 @@ export default function App() {
     modelId: modelId().trim() || 'gpt-4o-mini',
     apiToken: apiToken().trim(),
   }))
+
+  const hasActiveToken = createMemo(
+    () => Boolean(apiToken().trim()) || serverHasToken(),
+  )
 
   const {
     messages,
@@ -155,18 +161,53 @@ export default function App() {
   }
 
   onMount(() => {
+    // 1. Load saved local connection settings and sync with server /api/connection
+    let localConnection: Partial<ModelConnectionConfig> | null = null
     try {
       const saved = window.localStorage.getItem(STORAGE_KEY_CONNECTION)
       if (saved) {
-        const parsed = JSON.parse(saved) as Partial<ModelConnectionConfig>
-        if (typeof parsed.baseUrl === 'string') setBaseUrl(parsed.baseUrl)
-        if (typeof parsed.modelId === 'string') setModelId(parsed.modelId)
-        if (typeof parsed.apiToken === 'string') setApiToken(parsed.apiToken)
+        localConnection = JSON.parse(saved) as Partial<ModelConnectionConfig>
+        if (typeof localConnection.baseUrl === 'string') setBaseUrl(localConnection.baseUrl)
+        if (typeof localConnection.modelId === 'string') setModelId(localConnection.modelId)
+        if (typeof localConnection.apiToken === 'string') setApiToken(localConnection.apiToken)
       }
     } catch {
       // Ignore storage errors
     }
 
+    fetch('/api/connection')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((serverConn) => {
+        if (!serverConn) return
+        if (!localConnection?.baseUrl && serverConn.baseUrl) {
+          setBaseUrl(serverConn.baseUrl)
+        }
+        if (!localConnection?.modelId && serverConn.modelId) {
+          setModelId(serverConn.modelId)
+        }
+        setServerHasToken(Boolean(serverConn.hasToken))
+
+        // If client had stored credentials in localStorage, push them to the server session
+        if (localConnection?.apiToken || localConnection?.baseUrl || localConnection?.modelId) {
+          fetch('/api/connection', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              baseUrl: baseUrl(),
+              modelId: modelId(),
+              apiToken: apiToken(),
+            }),
+          })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((updated) => {
+              if (updated) setServerHasToken(Boolean(updated.hasToken))
+            })
+            .catch(() => {})
+        }
+      })
+      .catch(() => {})
+
+    // 2. Fetch authoritative initial jobs list from server
     fetch('/api/jobs')
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
@@ -174,41 +215,63 @@ export default function App() {
           setJobs(data.jobs)
         }
       })
-      .catch(() => {
-        // Fallback to initial seeded jobs
-      })
+      .catch(() => {})
 
-    // Smooth live progress increment for in-progress jobs
-    const timer = window.setInterval(() => {
-      setJobs((prev) =>
-        prev.map((job) => {
-          if (job.status !== 'in_progress') return job
-          const nextPct = Math.min(100, job.progress + 1)
-          return {
-            ...job,
-            progress: nextPct,
-            status: nextPct >= 100 ? 'completed' : 'in_progress',
-            lifecycleState: nextPct >= 100 ? 'Completed' : job.lifecycleState,
-          }
-        }),
-      )
-    }, 3500)
+    // 3. Subscribe to live server SSE stream (/api/jobs/stream) for real-time job state sync
+    const eventSource = new EventSource('/api/jobs/stream')
 
-    onCleanup(() => window.clearInterval(timer))
+    eventSource.onopen = () => {
+      setServerStreamConnected(true)
+    }
+
+    eventSource.addEventListener('jobs:sync', (event) => {
+      try {
+        const parsed = JSON.parse((event as MessageEvent).data) as { jobs?: EcsJob[] }
+        if (Array.isArray(parsed.jobs)) {
+          setJobs(parsed.jobs)
+          setServerStreamConnected(true)
+        }
+      } catch {
+        // Ignore malformed frame
+      }
+    })
+
+    eventSource.onerror = () => {
+      setServerStreamConnected(false)
+    }
+
+    onCleanup(() => {
+      eventSource.close()
+    })
   })
 
-  const saveConnectionSettings = (e?: Event) => {
+  const saveConnectionSettings = async (e?: Event) => {
     e?.preventDefault()
+    const current = connectionConfig()
     try {
-      window.localStorage.setItem(
-        STORAGE_KEY_CONNECTION,
-        JSON.stringify(connectionConfig()),
-      )
-      setConnectionSavedNotice('Connection settings updated')
-      window.setTimeout(() => setConnectionSavedNotice(''), 2500)
+      window.localStorage.setItem(STORAGE_KEY_CONNECTION, JSON.stringify(current))
     } catch {
       // Ignore storage restrictions
     }
+
+    try {
+      const res = await fetch('/api/connection', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(current),
+      })
+      if (res.ok) {
+        const updated = await res.json()
+        setServerHasToken(Boolean(updated.hasToken))
+        setConnectionSavedNotice('Synced with server')
+      } else {
+        setConnectionSavedNotice('Saved locally')
+      }
+    } catch {
+      setConnectionSavedNotice('Saved locally')
+    }
+
+    window.setTimeout(() => setConnectionSavedNotice(''), 2500)
   }
 
   const toggleJobExpanded = (jobId: string) => {
@@ -306,18 +369,10 @@ export default function App() {
 
   const handleAbortJob = async (job: EcsJob, e: MouseEvent) => {
     e.stopPropagation()
-    if (job.status === 'completed' || job.status === 'failed') return
+    if (job.status !== 'in_progress') return
 
-    const abortedStep = {
-      id: `abort-${Date.now()}`,
-      timestamp: new Date().toISOString().slice(11, 19),
-      stage: 'Operator Abort Signal',
-      detail: 'Job execution aborted by operator; state transitioned to Aborted/Failed',
-      state: 'warning' as const,
-    }
-
-    const updatedSteps = [...job.steps, abortedStep]
-
+    // Optimistic update reconciled with authoritative POST /api/jobs/:id/abort
+    const previousJobs = jobs()
     setJobs((prev) =>
       prev.map((item) =>
         item.id === job.id
@@ -326,25 +381,25 @@ export default function App() {
               status: 'failed',
               lifecycleState: 'Aborted',
               eta: 'Aborted',
-              steps: updatedSteps,
             }
           : item,
       ),
     )
 
     try {
-      await fetch(`/api/jobs/${job.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: 'failed',
-          lifecycleState: 'Aborted',
-          eta: 'Aborted',
-          steps: updatedSteps,
-        }),
+      const res = await fetch(`/api/jobs/${job.id}/abort`, {
+        method: 'POST',
       })
+      if (res.ok) {
+        const data = await res.json()
+        if (Array.isArray(data?.jobs)) {
+          setJobs(data.jobs)
+        }
+      } else {
+        setJobs(previousJobs)
+      }
     } catch {
-      // Optimistic state already applied
+      // Keep optimistic state if offline
     }
   }
 
@@ -366,44 +421,18 @@ export default function App() {
       })
       if (res.ok) {
         const data = await res.json()
-        if (data?.job) {
+        if (Array.isArray(data?.jobs)) {
+          setJobs(data.jobs)
+        } else if (data?.job) {
           setJobs((prev) => [data.job, ...prev])
+        }
+        if (data?.job?.id) {
           setSelectedJobId(data.job.id)
           setExpandedJobIds((prev) => ({ ...prev, [data.job.id]: true }))
         }
       }
     } catch {
-      const fallbackJob: EcsJob = {
-        id: `JOB-${4100 + jobs().length}`,
-        code: newJobCode(),
-        workflowName: 'ECS Modernization Workflow',
-        title: payload.title,
-        airportIata: newJobAirport(),
-        airportIcao: `K${newJobAirport()}`,
-        airportName: `${newJobAirport()} International`,
-        ecsSystem: 'ATCDeploymentSystem',
-        lifecycleState: 'Running',
-        status: 'in_progress',
-        progress: 20,
-        elapsed: '00m 05s',
-        eta: '07m 00s',
-        owner: 'ECS Dispatch Controller',
-        keyMetricLabel: 'Telemetry Sync',
-        keyMetricValue: 'Nominal',
-        summary: `Dispatched ${payload.code} job for ${payload.airportIata}.`,
-        steps: [
-          {
-            id: 's-1',
-            timestamp: 'Now',
-            stage: 'Component Initialization',
-            detail: 'Initialized RelationSet and Lifecycle components',
-            state: 'active',
-          },
-        ],
-      }
-      setJobs((prev) => [fallbackJob, ...prev])
-      setSelectedJobId(fallbackJob.id)
-      setExpandedJobIds((prev) => ({ ...prev, [fallbackJob.id]: true }))
+      // Ignore network error
     }
 
     setNewJobTitle('')
@@ -473,9 +502,9 @@ export default function App() {
               <p class="chat-subtitle">
                 Vercel AI UI ·{' '}
                 <span class="tabular-nums">
-                  {apiToken().trim()
+                  {hasActiveToken()
                     ? `Connected (${modelId() || 'gpt-4o-mini'})`
-                    : `Simulator (${modelId() || 'gpt-4o-mini'} · No API token set)`}
+                    : `Server Engine (${modelId() || 'gpt-4o-mini'} · No API token set)`}
                 </span>{' '}
                 · Stream:{' '}
                 <span class="tabular-nums">
@@ -527,7 +556,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* User-Provided Model Connection Bar (Base URL, Model ID, API Token) */}
+          {/* User-Provided Model Connection Bar (synced to /api/connection & /api/chat) */}
           <Show when={showConnectionBar()}>
             <form
               class="connection-bar"
@@ -587,9 +616,9 @@ export default function App() {
 
               <div class="conn-status-row">
                 <span>
-                  {apiToken().trim()
-                    ? `Live LLM credentials active for ${modelId() || 'gpt-4o-mini'} via ${baseUrl() || 'default endpoint'}.`
-                    : 'Provide your API token and endpoint above to connect directly to your LLM provider.'}
+                  {hasActiveToken()
+                    ? `Live LLM credentials synced with server for ${modelId() || 'gpt-4o-mini'} via ${baseUrl() || 'default endpoint'}.`
+                    : 'Provide your API token and endpoint above to connect the server to your LLM provider.'}
                 </span>
                 <Show when={connectionSavedNotice()}>
                   <span class="tabular-nums">{connectionSavedNotice()}</span>
@@ -741,6 +770,8 @@ export default function App() {
               </span>
             </div>
             <div class="panel-summary-meta">
+              <span>{serverStreamConnected() ? 'Live SSE Sync' : 'HTTP Sync'}</span>
+              <span aria-hidden="true">·</span>
               <span>Yellow: In Progress</span>
               <span aria-hidden="true">·</span>
               <span>Green: Complete</span>

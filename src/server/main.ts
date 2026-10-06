@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { streamSSE } from 'hono/streaming'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import {
@@ -19,12 +20,127 @@ import {
 
 const app = new Hono()
 
+// Server-authoritative state for ongoing ECS jobs and model connection configuration
 const jobsStore: EcsJob[] = structuredClone(INITIAL_ECS_JOBS)
+
+let serverConnection: ModelConnectionConfig = {
+  baseUrl: process.env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1',
+  modelId: process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini',
+  apiToken: process.env.OPENAI_API_KEY?.trim() || '',
+}
+
+type JobsListener = (jobs: EcsJob[]) => void
+const jobsListeners = new Set<JobsListener>()
+
+function broadcastJobs() {
+  const snapshot = structuredClone(jobsStore)
+  for (const listener of jobsListeners) {
+    try {
+      listener(snapshot)
+    } catch {
+      // Ignore disconnected listener errors
+    }
+  }
+}
+
+// Server-side ECS job progression tick (updates in-progress jobs authoritatively and broadcasts via SSE)
+setInterval(() => {
+  let changed = false
+  for (let i = 0; i < jobsStore.length; i++) {
+    const job = jobsStore[i]
+    if (job.status !== 'in_progress') continue
+    changed = true
+    const nextProgress = job.progress >= 96 ? 35 : job.progress + 1
+    jobsStore[i] = {
+      ...job,
+      progress: nextProgress,
+    }
+  }
+  if (changed) {
+    broadcastJobs()
+  }
+}, 4000)
 
 app.use('*', cors())
 
+// Authoritative Model Connection Endpoints
+app.get('/api/connection', (c) => {
+  const hasToken = Boolean(serverConnection.apiToken.trim())
+  const raw = serverConnection.apiToken.trim()
+  const tokenPreview =
+    hasToken && raw.length > 6
+      ? `${raw.slice(0, 3)}...${raw.slice(-3)}`
+      : hasToken
+        ? 'Configured'
+        : ''
+
+  return c.json({
+    baseUrl: serverConnection.baseUrl,
+    modelId: serverConnection.modelId,
+    hasToken,
+    tokenPreview,
+  })
+})
+
+app.put('/api/connection', async (c) => {
+  const body = await c.req.json<Partial<ModelConnectionConfig>>()
+  if (typeof body.baseUrl === 'string') {
+    serverConnection.baseUrl = body.baseUrl.trim() || 'https://api.openai.com/v1'
+  }
+  if (typeof body.modelId === 'string') {
+    serverConnection.modelId = body.modelId.trim() || 'gpt-4o-mini'
+  }
+  if (typeof body.apiToken === 'string') {
+    serverConnection.apiToken = body.apiToken.trim()
+  }
+
+  const hasToken = Boolean(serverConnection.apiToken.trim())
+  return c.json({
+    baseUrl: serverConnection.baseUrl,
+    modelId: serverConnection.modelId,
+    hasToken,
+  })
+})
+
+// Authoritative Ongoing ECS Jobs Endpoints + SSE Live Stream
 app.get('/api/jobs', (c) => {
   return c.json({ jobs: jobsStore })
+})
+
+app.get('/api/jobs/stream', (c) => {
+  return streamSSE(c, async (stream) => {
+    let active = true
+
+    const sendSnapshot = async (jobs: EcsJob[]) => {
+      if (!active) return
+      await stream.writeSSE({
+        event: 'jobs:sync',
+        data: JSON.stringify({ jobs }),
+      })
+    }
+
+    await sendSnapshot(jobsStore)
+
+    const listener: JobsListener = (jobs) => {
+      sendSnapshot(jobs).catch(() => {})
+    }
+    jobsListeners.add(listener)
+
+    stream.onAbort(() => {
+      active = false
+      jobsListeners.delete(listener)
+    })
+
+    while (active) {
+      await stream.sleep(15000)
+      if (active) {
+        await stream.writeSSE({
+          event: 'ping',
+          data: String(Date.now()),
+        })
+      }
+    }
+  })
 })
 
 app.post('/api/jobs', async (c) => {
@@ -139,7 +255,41 @@ app.post('/api/jobs', async (c) => {
   }
 
   jobsStore.unshift(newJob)
-  return c.json({ job: newJob }, 201)
+  broadcastJobs()
+  return c.json({ job: newJob, jobs: jobsStore }, 201)
+})
+
+app.post('/api/jobs/:id/abort', (c) => {
+  const id = c.req.param('id')
+  const idx = jobsStore.findIndex((j) => j.id === id)
+  if (idx === -1) {
+    return c.json({ error: 'Job not found' }, 404)
+  }
+
+  const current = jobsStore[idx]
+  if (current.status !== 'in_progress') {
+    return c.json({ job: current, jobs: jobsStore })
+  }
+
+  const abortedStep = {
+    id: `abort-${Date.now()}`,
+    timestamp: new Date().toISOString().slice(11, 19),
+    stage: 'Operator Abort Signal',
+    detail: 'Job execution aborted by operator; state transitioned to Aborted/Failed',
+    state: 'warning' as const,
+  }
+
+  const updated: EcsJob = {
+    ...current,
+    status: 'failed',
+    lifecycleState: 'Aborted',
+    eta: 'Aborted',
+    steps: [...current.steps, abortedStep],
+  }
+
+  jobsStore[idx] = updated
+  broadcastJobs()
+  return c.json({ job: updated, jobs: jobsStore })
 })
 
 app.patch('/api/jobs/:id', async (c) => {
@@ -155,13 +305,14 @@ app.patch('/api/jobs/:id', async (c) => {
     ...patch,
   }
   jobsStore[idx] = updated
-  return c.json({ job: updated })
+  broadcastJobs()
+  return c.json({ job: updated, jobs: jobsStore })
 })
 
 function buildAssistantResponse(
   userPrompt: string,
   jobs: EcsJob[],
-  connection?: Partial<ModelConnectionConfig>,
+  connection: { baseUrl?: string; modelId: string; hasToken: boolean },
 ): string {
   const q = userPrompt.toLowerCase()
   const runningJobs = jobs.filter((j) => j.status === 'in_progress')
@@ -176,9 +327,9 @@ function buildAssistantResponse(
       q.includes(j.ecsSystem.toLowerCase()),
   )
 
-  const connNote = connection?.baseUrl
-    ? `Endpoint: \`${connection.baseUrl}\` · Model: \`${connection.modelId || 'gpt-4o-mini'}\``
-    : `Model: \`${connection?.modelId || 'gpt-4o-mini'}\` (Local ECS Simulator — add an API token in Connection Settings for live provider calls)`
+  const connNote = connection.baseUrl
+    ? `Endpoint: \`${connection.baseUrl}\` · Model: \`${connection.modelId}\``
+    : `Model: \`${connection.modelId}\` (Server ECS Engine — save an API token in Connection Settings for external LLM provider calls)`
 
   if (matchedJob) {
     const activeStep =
@@ -226,18 +377,32 @@ app.post('/api/chat', async (c) => {
   const messages = payload.messages ?? []
   const connection = payload.connection
 
+  // Update server connection state if non-empty fields are supplied
+  if (connection?.baseUrl?.trim()) {
+    serverConnection.baseUrl = connection.baseUrl.trim()
+  }
+  if (connection?.modelId?.trim()) {
+    serverConnection.modelId = connection.modelId.trim()
+  }
+  if (connection?.apiToken?.trim()) {
+    serverConnection.apiToken = connection.apiToken.trim()
+  }
+
   const apiToken =
     connection?.apiToken?.trim() ||
     c.req.header('x-api-token')?.trim() ||
+    serverConnection.apiToken.trim() ||
     process.env.OPENAI_API_KEY?.trim() ||
     ''
   const baseUrl =
     connection?.baseUrl?.trim() ||
     c.req.header('x-base-url')?.trim() ||
+    serverConnection.baseUrl.trim() ||
     undefined
   const modelId =
     connection?.modelId?.trim() ||
     c.req.header('x-model-id')?.trim() ||
+    serverConnection.modelId.trim() ||
     'gpt-4o-mini'
 
   const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user')
@@ -271,7 +436,11 @@ app.post('/api/chat', async (c) => {
     })
   }
 
-  const replyText = buildAssistantResponse(userText, jobsStore, connection)
+  const replyText = buildAssistantResponse(userText, jobsStore, {
+    baseUrl,
+    modelId,
+    hasToken: false,
+  })
   const chunks = replyText.match(/.{1,18}(\s|$)|\S+/g) ?? [replyText]
 
   const stream = createUIMessageStream({
@@ -289,7 +458,16 @@ app.post('/api/chat', async (c) => {
   return createUIMessageStreamResponse({ stream })
 })
 
-app.get('/api/health', (c) => c.text('Hono is running'))
+app.get('/api/health', (c) =>
+  c.json({
+    status: 'ok',
+    service: 'deloitte-airport-modernization-ecs',
+    jobsCount: jobsStore.length,
+    modelId: serverConnection.modelId,
+    baseUrl: serverConnection.baseUrl,
+    hasApiToken: Boolean(serverConnection.apiToken),
+  }),
+)
 
 app.use('/*', serveStatic({ root: './src/client/dist' }))
 app.get('*', serveStatic({ path: './src/client/dist/index.html' }))
