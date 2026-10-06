@@ -4,15 +4,16 @@ import { cors } from 'hono/cors'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { FileLogger } from './logging/logger.ts'
-import { InMemoryJobRepository } from './services/job-repository.ts'
+import { PglitePgBossJobManager } from './services/job-repository.ts'
 import { InMemoryConnectionStore } from './services/connection-store.ts'
+import { SinglePurposeLlmJobRunner } from './services/job-agent-runner.ts'
 import { VercelAiChatService } from './services/chat-service.ts'
 import { createJobsRoutes } from './routes/jobs-routes.ts'
 import { createConnectionRoutes } from './routes/connection-routes.ts'
 import { createChatRoutes } from './routes/chat-routes.ts'
 import { createLogsRoutes } from './routes/logs-routes.ts'
 
-// Composition Root (Dependency Inversion & Single Responsibility)
+// Composition Root (SOLID Dependency Injection with PGlite + pg-boss)
 const logsDir = path.resolve(process.cwd(), 'logs')
 const serverLogger = new FileLogger({
   logsDir,
@@ -25,9 +26,16 @@ const clientFileLogger = new FileLogger({
   source: 'client',
 })
 
-const jobRepository = new InMemoryJobRepository(serverLogger)
 const connectionStore = new InMemoryConnectionStore(serverLogger)
-const chatService = new VercelAiChatService(jobRepository, connectionStore, serverLogger)
+const jobAgentRunner = new SinglePurposeLlmJobRunner(connectionStore, serverLogger)
+const jobRepository = new PglitePgBossJobManager(serverLogger, jobAgentRunner)
+const chatService = new VercelAiChatService(
+  jobRepository,
+  connectionStore,
+  serverLogger,
+)
+
+await jobRepository.init()
 
 const app = new Hono()
 
@@ -57,6 +65,7 @@ app.get('/api/health', (c) => {
   return c.json({
     status: 'ok',
     service: 'deloitte-airport-modernization-ecs',
+    jobManager: 'pglite+pg-boss',
     jobsCount: jobRepository.getAll().length,
     modelId: conn.modelId,
     baseUrl: conn.baseUrl,
@@ -67,9 +76,13 @@ app.get('/api/health', (c) => {
 app.use('/*', serveStatic({ root: './src/client/dist' }))
 app.get('*', serveStatic({ path: './src/client/dist/index.html' }))
 
-// Background server-authoritative job telemetry tick
+// Background server-authoritative job telemetry tick persisted in PGlite
 setInterval(() => {
-  jobRepository.tickProgress()
+  jobRepository.tickProgress().catch((err) => {
+    serverLogger.error('job_manager.tick_failed', {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  })
 }, 4000)
 
 const port = Number(process.env.PORT) || 3000
@@ -82,6 +95,7 @@ serve({
 serverLogger.info('server.started', {
   port,
   hostname: '0.0.0.0',
+  jobManager: 'pglite+pg-boss',
   logsDir,
 })
 

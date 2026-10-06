@@ -8,6 +8,13 @@ export interface ModelConnectionConfig {
   apiToken: string
 }
 
+export interface JobChatMessage {
+  id: string
+  role: 'system' | 'user' | 'assistant'
+  content: string
+  timestamp: string
+}
+
 interface JobStepLog {
   id: string
   timestamp: string
@@ -18,9 +25,11 @@ interface JobStepLog {
 
 export interface EcsJob {
   id: string
+  pgBossJobId?: string
   code: WorkflowCode
   workflowName: string
   title: string
+  purpose: string
   airportIata: string
   airportIcao: string
   airportName: string
@@ -35,6 +44,7 @@ export interface EcsJob {
   keyMetricValue: string
   summary: string
   steps: JobStepLog[]
+  chatHistory: JobChatMessage[]
 }
 
 export const INITIAL_ECS_JOBS: EcsJob[] = [
@@ -43,6 +53,8 @@ export const INITIAL_ECS_JOBS: EcsJob[] = [
     code: 'W4',
     workflowName: 'ATC & Airfield Modernization',
     title: 'BNATCS Surface Radar & Voice Switch Cutover',
+    purpose:
+      'Verify low-traffic cutover readiness and calculate NAS delay attribution delta for 2 replacement surface radars and 14 digital voice switches at KDEN.',
     airportIata: 'DEN',
     airportIcao: 'KDEN',
     airportName: 'Denver International',
@@ -56,7 +68,7 @@ export const INITIAL_ECS_JOBS: EcsJob[] = [
     keyMetricLabel: 'Delay Attribution Delta',
     keyMetricValue: '-28.4% vs baseline',
     summary:
-      'Executing low-traffic window cutover for 2 replacement surface radars and 14 digital voice switches on Concourse B/C apron.',
+      'Single-purpose LLM job auditing TDM-to-IP trunks and ADS-B surface fusion for Concourse B/C apron cutover.',
     steps: [
       {
         id: 's1',
@@ -80,12 +92,30 @@ export const INITIAL_ECS_JOBS: EcsJob[] = [
         state: 'active',
       },
     ],
+    chatHistory: [
+      {
+        id: 'm1',
+        role: 'user',
+        content:
+          'Verify low-traffic cutover readiness and calculate NAS delay attribution delta for 2 replacement surface radars and 14 digital voice switches at KDEN.',
+        timestamp: '01:02:00',
+      },
+      {
+        id: 'm2',
+        role: 'assistant',
+        content:
+          'Validated TDM-to-IP fiber trunks (0% packet loss) and Runway 16R/34L ADS-B fusion. Currently migrating tower positions 4–9 (-28.4% delay delta vs baseline).',
+        timestamp: '01:06:30',
+      },
+    ],
   },
   {
     id: 'JOB-4094',
     code: 'W3',
     workflowName: 'Passenger Journey Modernization',
     title: 'Biometric Self-Bag-Drop Throughput Calibration',
+    purpose:
+      'Evaluate M/M/c checkpoint utilization (ρ = λ / cμ) and biometric photo-match latency across 36 self-bag-drop kiosks at DEL Terminal 3 against the 70-second budget.',
     airportIata: 'DEL',
     airportIcao: 'VIDP',
     airportName: 'Indira Gandhi International (T3)',
@@ -99,7 +129,7 @@ export const INITIAL_ECS_JOBS: EcsJob[] = [
     keyMetricLabel: 'Avg Bag-Drop Stage Time',
     keyMetricValue: '68.4s (target ≤ 70s)',
     summary:
-      'Evaluating M/M/c checkpoint utilization (ρ = 0.78) and biometric photo-match latency across 36 self-bag-drop kiosks.',
+      'Single-purpose LLM job evaluating M/M/c checkpoint utilization (ρ = 0.78) and biometric photo-match latency across 36 kiosks.',
     steps: [
       {
         id: 's1',
@@ -116,12 +146,30 @@ export const INITIAL_ECS_JOBS: EcsJob[] = [
         state: 'active',
       },
     ],
+    chatHistory: [
+      {
+        id: 'm1',
+        role: 'user',
+        content:
+          'Evaluate M/M/c checkpoint utilization and biometric photo-match latency across 36 self-bag-drop kiosks at DEL Terminal 3 against the 70-second budget.',
+        timestamp: '00:56:00',
+      },
+      {
+        id: 'm2',
+        role: 'assistant',
+        content:
+          '90-day stage observations ingested. Mean bag-drop stage time is 68.4s (down 30.9% from 99s manual baseline) with utilization ρ = 0.78.',
+        timestamp: '01:01:40',
+      },
+    ],
   },
   {
     id: 'JOB-4096',
     code: 'W7',
     workflowName: 'Realtime Data Compilation & Benchmarking',
     title: 'FAA SWIM SFDPS + OpenSky ADS-B Entity Sync',
+    purpose:
+      'Resolve aircraft-level OpenSky ADS-B callsign vectors and FAA SWIM SFDPS flight plans into airport-level arrival/departure delay observations for KLAX.',
     airportIata: 'LAX',
     airportIcao: 'KLAX',
     airportName: 'Los Angeles International',
@@ -135,7 +183,7 @@ export const INITIAL_ECS_JOBS: EcsJob[] = [
     keyMetricLabel: 'Feed Latency SLA',
     keyMetricValue: '3.2s (RT ≤ 10s)',
     summary:
-      'Aggregating aircraft-level ADS-B positions and FAA SWIM flight plans into airport-level arrival/departure delay observations.',
+      'Single-purpose LLM job aggregating aircraft-level ADS-B positions and FAA SWIM flight plans into KLAX delay observations.',
     steps: [
       {
         id: 's1',
@@ -152,12 +200,30 @@ export const INITIAL_ECS_JOBS: EcsJob[] = [
         state: 'active',
       },
     ],
+    chatHistory: [
+      {
+        id: 'm1',
+        role: 'user',
+        content:
+          'Resolve aircraft-level OpenSky ADS-B callsign vectors and FAA SWIM SFDPS flight plans into airport-level arrival/departure delay observations for KLAX.',
+        timestamp: '00:58:00',
+      },
+      {
+        id: 'm2',
+        role: 'assistant',
+        content:
+          'Connected to SWIM SFDPS feed at 3.2s latency SLA. Reconciling live callsign vectors against KLAX gate and runway assignments.',
+        timestamp: '01:03:15',
+      },
+    ],
   },
   {
     id: 'JOB-4085',
     code: 'W1',
     workflowName: 'Funding & Grant Lifecycle',
     title: 'FY2026 AIP & IIJA ATP Grant Drawdown Audit',
+    purpose:
+      'Compute the NPIAS 5-year funding gap, 75% large-hub AIP federal share, and DSCR bond coverage ratio (≥ 1.25) for KORD taxiway reconfiguration.',
     airportIata: 'ORD',
     airportIcao: 'KORD',
     airportName: 'Chicago O’Hare International',
@@ -171,7 +237,7 @@ export const INITIAL_ECS_JOBS: EcsJob[] = [
     keyMetricLabel: 'Outlay Ratio (OR)',
     keyMetricValue: '0.64 ($412M / $640M)',
     summary:
-      'Calculating NPIAS 5-year funding gap, 75% large-hub AIP federal share, and DSCR bond coverage for taxiway reconfiguration.',
+      'Single-purpose LLM job calculating NPIAS 5-year funding gap, 75% large-hub AIP share, and DSCR bond coverage for KORD.',
     steps: [
       {
         id: 's1',
@@ -188,12 +254,30 @@ export const INITIAL_ECS_JOBS: EcsJob[] = [
         state: 'active',
       },
     ],
+    chatHistory: [
+      {
+        id: 'm1',
+        role: 'user',
+        content:
+          'Compute the NPIAS 5-year funding gap, 75% large-hub AIP federal share, and DSCR bond coverage ratio (≥ 1.25) for KORD taxiway reconfiguration.',
+        timestamp: '00:49:00',
+      },
+      {
+        id: 'm2',
+        role: 'assistant',
+        content:
+          'Ingested KORD capital ledger: $412M cumulative outlays of $640M obligated (OR = 0.64). Verifying sponsor 25% share and DSCR ≥ 1.25.',
+        timestamp: '00:53:10',
+      },
+    ],
   },
   {
     id: 'JOB-4079',
     code: 'W5',
     workflowName: 'Sustainability & Energy Transition',
     title: 'Gate Electrification & Geothermal Glidepath',
+    purpose:
+      'Audit $327M FAA gate electrification grant compliance and Net-Zero 2040 Scope 1+2 emissions glidepath across 90 domestic gates at KDEN.',
     airportIata: 'DEN',
     airportIcao: 'KDEN',
     airportName: 'Denver International',
@@ -207,7 +291,7 @@ export const INITIAL_ECS_JOBS: EcsJob[] = [
     keyMetricLabel: 'Scope 1+2 Intensity',
     keyMetricValue: '-19.2% kgCO2e/pax',
     summary:
-      'Verified $327M FAA gate electrification grant compliance and Net-Zero 2040 emissions glidepath across 90 domestic gates.',
+      'Single-purpose LLM job verifying $327M FAA gate electrification compliance and Net-Zero 2040 glidepath across 90 gates.',
     steps: [
       {
         id: 's1',
@@ -224,12 +308,30 @@ export const INITIAL_ECS_JOBS: EcsJob[] = [
         state: 'done',
       },
     ],
+    chatHistory: [
+      {
+        id: 'm1',
+        role: 'user',
+        content:
+          'Audit $327M FAA gate electrification grant compliance and Net-Zero 2040 Scope 1+2 emissions glidepath across 90 domestic gates at KDEN.',
+        timestamp: '00:15:00',
+      },
+      {
+        id: 'm2',
+        role: 'assistant',
+        content:
+          'Audit complete: Scope 1+2 intensity reduced by -19.2% kgCO2e/pax across Concourses A–C. Provenance sealed at credibility 5/5.',
+        timestamp: '00:39:10',
+      },
+    ],
   },
   {
     id: 'JOB-4088',
     code: 'W2',
     workflowName: 'Capital Project Delivery & ORAT',
     title: 'New Terminal One ORAT Gate & Cyber Audit',
+    purpose:
+      'Verify ORAT readiness gate (R ≥ 0.95) and execute CyberResilienceCheck and AccessibilityAudit for JFK New Terminal One Phase A opening.',
     airportIata: 'JFK',
     airportIcao: 'KJFK',
     airportName: 'John F. Kennedy International',
@@ -243,7 +345,7 @@ export const INITIAL_ECS_JOBS: EcsJob[] = [
     keyMetricLabel: 'ORAT Readiness (R)',
     keyMetricValue: '0.93 / 0.95 gate failure',
     summary:
-      'ORAT gate halted at 91%: CyberResilienceCheck flagged 2 unsegmented baggage PLC VLAN trunks requiring remediation before sign-off.',
+      'Single-purpose LLM job halted at 91%: CyberResilienceCheck flagged 2 unsegmented baggage PLC VLAN trunks requiring remediation.',
     steps: [
       {
         id: 's1',
@@ -258,6 +360,22 @@ export const INITIAL_ECS_JOBS: EcsJob[] = [
         stage: 'CyberResilienceCheck (Gate Failure)',
         detail: '2 baggage PLC VLAN segmentation rules failed R ≥ 0.95 security threshold',
         state: 'warning',
+      },
+    ],
+    chatHistory: [
+      {
+        id: 'm1',
+        role: 'user',
+        content:
+          'Verify ORAT readiness gate (R ≥ 0.95) and execute CyberResilienceCheck and AccessibilityAudit for JFK New Terminal One Phase A opening.',
+        timestamp: '00:25:00',
+      },
+      {
+        id: 'm2',
+        role: 'assistant',
+        content:
+          'ORAT gate halted at R = 0.93 (threshold ≥ 0.95): 2 baggage handling PLC VLAN trunks lacked OT/IT firewall isolation.',
+        timestamp: '00:58:04',
       },
     ],
   },
