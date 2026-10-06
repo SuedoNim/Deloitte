@@ -1,0 +1,694 @@
+/* ============================================================
+   AIRPORT MODERNIZATION — ECS VIEW PACK (MDX)
+   Seven views, one per workflow (W1–W7), per the view registry
+   in "Airport Modernization — ECS Architecture" §9.
+   Framework-agnostic MDX. Each view imports a small shared UI
+   kit (components/ui.mdx). Sample data is drawn from the
+   researched source material; replace props with bindings to
+   the ViewProjectionSystem output of the ECS store.
+   Files:
+     components/ui.mdx              (stub, implement once)
+     views/v1-funding-portfolio.mdx
+     views/v2-project-tracker.mdx
+     views/v3-passenger-journey.mdx
+     views/v4-atc-airfield.mdx
+     views/v5-sustainability.mdx
+     views/v6-maturity-radar.mdx
+     views/v7-data-hub.mdx
+   ============================================================ */
+
+/* ============================================================
+   FILE: components/ui.mdx
+   Shared UI kit stub. Modern UI principles applied throughout:
+   progressive disclosure (cards before tables), status color is
+   never the only signal (chips carry text), keyboard-navigable
+   tables, loading/empty/error states for every data region.
+   ---------------------------------------------------------- */
+
+export function StatCard({ label, value, delta, trend, caption }) {
+  /* KPI card. delta: signed %; trend: "up"|"down"; caption: context. */
+  return (
+    <section className="stat-card" aria-label={label}>
+      <h3 className="stat-card__label">{label}</h3>
+      <p className="stat-card__value">{value}</p>
+      {delta ? <p className={"stat-card__delta stat-card__delta--" + trend}>{delta}</p> : null}
+      {caption ? <p className="stat-card__caption">{caption}</p> : null}
+    </section>
+  );
+}
+
+export function StateChip({ state, kind }) {
+  /* kind: "healthy" | "warn" | "critical" | "neutral" — always shows state text (a11y). */
+  return <span className={"chip chip--" + kind}>{state}</span>;
+}
+
+export function DataTable({ columns, rows, empty, loading, error, caption }) {
+  if (loading) return <p role="status">Loading…</p>;
+  if (error) return <p role="alert">Could not load data: {error}</p>;
+  if (!rows || rows.length === 0) return <p>{empty || "No records."}</p>;
+  return (
+    <table className="data-table">
+      <caption>{caption}</caption>
+      <thead>
+        <tr>{columns.map((c) => <th key={c.key} scope="col">{c.label}</th>)}</tr>
+      </thead>
+      <tbody>
+        {rows.map((r, i) => (
+          <tr key={r.id || i}>
+            {columns.map((c) => <td key={c.key}>{c.render ? c.render(r) : r[c.key]}</td>)}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+export function Callout({ title, tone, children }) {
+  /* tone: "info" | "warn" | "unofficial". Used to flag unofficial/gap facts. */
+  return (
+    <aside className={"callout callout--" + tone} role="note">
+      {title ? <h4>{title}</h4> : null}
+      <div>{children}</div>
+    </aside>
+  );
+}
+
+export function Formula({ name, expr, where }) {
+  return (
+    <div className="formula">
+      <p className="formula__name">{name}</p>
+      <code className="formula__expr">{expr}</code>
+      {where ? <p className="formula__where">{where}</p> : null}
+    </div>
+  );
+}
+
+export function StateTable({ transitions, caption }) {
+  /* Renders a workflow state transition table (from → event/guard/action → to). */
+  return (
+    <table className="state-table">
+      <caption>{caption}</caption>
+      <thead>
+        <tr><th>Current</th><th>Event (guard)</th><th>Action</th><th>Next</th></tr>
+      </thead>
+      <tbody>
+        {transitions.map((t, i) => (
+          <tr key={i}>
+            <td>{t.current}</td>
+            <td>{t.event}{t.guard ? " (guard: " + t.guard + ")" : ""}</td>
+            <td>{t.action}</td>
+            <td>{t.next}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+export function MetricRadar({ dimensions, max }) {
+  /* 0..max scores per dimension; prints a text list for screen readers. */
+  return (
+    <figure className="radar">
+      <figcaption>Maturity by dimension (0–{max})</figcaption>
+      <ul>
+        {dimensions.map((d) => (
+          <li key={d.name}>{d.name}: {d.score}/{max} {d.note ? "— " + d.note : ""}</li>
+        ))}
+      </ul>
+    </figure>
+  );
+}
+
+/* ============================================================
+   FILE: views/v1-funding-portfolio.mdx
+   View V1 — Funding & Portfolio Dashboard
+   Serves: W1 Funding & Grant Lifecycle (drawdown events feed W2)
+   Roles: airport sponsor CFO, FAA grants officer
+   Refresh: funding events (hourly), benchmark stats (daily)
+   ---------------------------------------------------------- */
+
+---
+title: Funding & Portfolio
+viewId: V1
+workflows: [W1-FundingGrantLifecycle]
+nextView: v2-project-tracker
+---
+
+import { StatCard, DataTable, StateChip, Callout, Formula, StateTable } from "../components/ui.mdx";
+
+# Funding & Portfolio
+
+Purpose: answer three questions the static FAA grant tables cannot —
+how much need remains unfunded, where each instrument is in its lifecycle,
+and whether every funded dollar is actually flowing (outlays, not just obligations).
+
+<StatCard
+  label="Funding gap (system need vs funded)"
+  value="$142B"
+  delta="+12% vs last cycle"
+  trend="up"
+  caption="US 2025–2029 build-out ≈ $174B across federal, state and private capital; terminals ≈ 42%."
+/>
+<StatCard
+  label="Outlay rate (obligated funds spent)"
+  value="0.68"
+  delta="-0.05"
+  trend="down"
+  caption="Alert if an instrument stalls below 0.5 for 18 months (Stalled state)."
+/>
+<StatCard
+  label="Weighted DSCR (bond-backed portfolio)"
+  value="1.42"
+  caption="Target ≥ 1.25 — municipal bonds are the post-2026 capital source after the IIJA ATP closed (Jan 2026)."
+/>
+
+## Instrument portfolio
+
+<DataTable
+  caption="Funding instruments by lifecycle state"
+  columns={[
+    { key: "instrument", label: "Instrument" },
+    { key: "airport", label: "Airport" },
+    { key: "kind", label: "Kind" },
+    { key: "award", label: "Award" },
+    { key: "outlay", label: "Outlay rate" },
+    { key: "state", label: "State", render: (r) => <StateChip state={r.state} kind={r.tone} /> }
+  ]}
+  rows={[
+    { id: "f1", instrument: "AIP-2025-0031", airport: "GEG", kind: "aip_grant", award: "$18.2M", outlay: "0.71", state: "DrawdownActive", tone: "healthy" },
+    { id: "f2", instrument: "ATP-Round5-DCA", airport: "DCA", kind: "atp_grant", award: "$835M (T1 program)", outlay: "0.34", state: "DrawdownActive", tone: "healthy" },
+    { id: "f3", instrument: "PFC-ORD-07", airport: "ORD", kind: "pfc", award: "$4.50/pax cap", outlay: "0.62", state: "Collecting", tone: "healthy" },
+    { id: "f4", instrument: "PANYNJ-2030-B", airport: "JFK", kind: "revenue_bond", award: "—", outlay: "0.15", state: "Obligated", tone: "neutral" },
+    { id: "f5", instrument: "PPP-DWC-CONC", airport: "DWC", kind: "p3_concession", award: "part of $35B program", outlay: "0.05", state: "InstrumentSelected", tone: "neutral" }
+  ]}
+/>
+
+## Formulas in play
+
+<Formula name="Funding gap" expr="Gap = TotalNeed − Σ FundedInstruments" where="TotalNeed from NPIAS 5-yr estimates + ACI-NA Infrastructure Needs Study" />
+<Formula name="AIP federal share" expr="s = 0.75 | 0.80 (noise) | 0.90–0.95 (small/GA); SponsorShare = Cost × (1 − s)" />
+<Formula name="PFC capacity" expr="PFC_annual = enplanements × PFC_rate" where="federal cap outdated — ACI-NA advocacy to lift it" />
+<Formula name="DSCR" expr="DSCR = netRevenues / annualDebtService" />
+
+## Lifecycle — W1 state machine (excerpt)
+
+<StateTable
+  caption="FundingInstrument.Lifecycle transitions supported by this view"
+  transitions={[
+    { current: "Obligated", event: "FirstDrawdown", guard: "costs incurred & eligible", action: "baseline outlay rate", next: "DrawdownActive" },
+    { current: "DrawdownActive", event: "Stalled (18 mo)", guard: "no outlays", action: "alert; re-plan with linked Initiative", next: "Stalled" },
+    { current: "CloseoutPending", event: "AuditComplete(clean)", guard: "single audit passed", action: "seal provenance", next: "Closed" }
+  ]}
+/>
+
+## Workflow actions this view supports
+
+- Record obligation, drawdown, and closeout events (drives W1 state transitions).
+- Drill through an instrument to its linked initiatives (V2) and airport (V7).
+- Raise a Stalled alert; route to re-plan or alternative funding (P3/bond — post-IIJA shift).
+- Flag instruments for PFC-cap advocacy queue (ACI-NA position).
+
+<Callout tone="warn" title="Documentation gap this view closes">
+  FAA AIP grant lists are static year/state tables with no lifecycle state, drawdown progress,
+  or grant→project→airport linkage. This view resolves all three via the RelationResolverSystem.
+</Callout>
+
+## States
+
+- Loading: skeleton cards + "Loading instruments…".
+- Empty: "No instruments registered for this airport — start in InstrumentSelected via a need record."
+- Error: alert banner with source credibility of the failing feed (V7 health chips).
+
+/* ============================================================
+   FILE: views/v2-project-tracker.mdx
+   View V2 — Project Lifecycle Tracker
+   Serves: W2 Capital Project Delivery & ORAT
+   Roles: program manager, contractor, ORAT team
+   Refresh: milestone events; daily EVM rollup
+   ---------------------------------------------------------- */
+
+---
+title: Project Lifecycle Tracker
+viewId: V2
+workflows: [W2-CapitalDelivery]
+nextView: v4-atc-airfield
+---
+
+import { StatCard, DataTable, StateChip, Callout, Formula } from "../components/ui.mdx";
+
+# Project Lifecycle Tracker
+
+Purpose: a stage-gate board over every modernization initiative
+(terminals, airfield, ground access, cargo — categories B, C, H, I),
+with plan-vs-actual earned value instead of the static "project page" marketing
+on operator portals.
+
+<StatCard label="Initiatives in delivery" value="47" delta="+6 this quarter" trend="up" />
+<StatCard label="Portfolio SPI (schedule performance)" value="0.93" delta="-0.02" trend="down" caption="Alert threshold: SPI < 0.90 raises ConstructionHold review." />
+<StatCard label="Portfolio CPI (cost performance)" value="0.97" caption="EAC = BAC / CPI — watch bonds-funded programs post-IIJA." />
+
+## Stage-gate board
+
+<DataTable
+  caption="Initiatives by stage"
+  columns={[
+    { key: "initiative", label: "Initiative" },
+    { key: "airport", label: "Airport" },
+    { key: "cat", label: "Category" },
+    { key: "model", label: "Delivery model" },
+    { key: "bac", label: "BAC" },
+    { key: "spi", label: "SPI" },
+    { key: "state", label: "State", render: (r) => <StateChip state={r.state} kind={r.tone} /> }
+  ]}
+  rows={[
+    { id: "i1", initiative: "JFK New Terminal One", airport: "JFK", cat: "C", model: "p3", bac: "$9.5B", spi: "0.95", state: "UnderConstruction", tone: "healthy" },
+    { id: "i2", initiative: "LaGuardia Terminal B final phase", airport: "LGA", cat: "C", model: "p3", bac: "—", spi: "1.01", state: "Operational", tone: "healthy" },
+    { id: "i3", initiative: "Newark Terminal 2 replacement", airport: "EWR", cat: "C", model: "design_build", bac: "—", spi: "0.94", state: "UnderConstruction", tone: "healthy" },
+    { id: "i4", initiative: "LAX people mover + ground access", airport: "LAX", cat: "H", model: "design_build", bac: "part of $30B", spi: "0.88", state: "ConstructionHold", tone: "warn" },
+    { id: "i5", initiative: "DCA Terminal 1 modernization", airport: "DCA", cat: "C", model: "design_bid_build", bac: "$835M", spi: "1.00", state: "Commissioning", tone: "neutral" },
+    { id: "i6", initiative: "Spokane parking garage expansion", airport: "GEG", cat: "H", model: "design_build", bac: "$48M", spi: "0.99", state: "Funded", tone: "neutral" }
+  ]}
+/>
+
+## ORAT gate — DCA Terminal 1 (sample)
+
+| Check | Status | Evidence |
+|---|---|---|
+| Terminal systems integration | 96% passed | ORAT test log |
+| Cyber resilience check | In progress | gap-fill: no doc source; internal pen-test |
+| Climate resilience check | Passed | drainage/heat design review |
+| Accessibility audit | In progress | gap-fill: PRM route & signage conformance |
+| TSA/BHS interfaces | Passed | screening tech upgrade accepted |
+
+## Formulas in play
+
+<Formula name="Demand trigger" expr="Trigger when forecastPax / designCapacity ≥ threshold (start expansion)" where="IATA ADRM demand-led planning" />
+<Formula name="EVM" expr="SPI = EV/PV, CPI = EV/AC, EAC = BAC/CPI, SV = EV − PV" />
+<Formula name="ORAT readiness" expr="R = passedTests / totalTests; gate at R ≥ 0.95, zero critical defects" />
+<Formula name="Closure window efficiency" expr="η = workHours / (closureHours × crewSize)" where="plan runway/taxiway closures in overnight opportunistic windows" />
+
+## Workflow actions supported
+
+- Advance stage gates (Funded → InDesign → Procuring → UnderConstruction → Commissioning → Operational).
+- Record milestones; recompute EV/SPI/CPI; raise ConstructionHold.
+- Complete gap-filled commissioning checks (cyber, climate, accessibility) — required for ORAT gate pass.
+- Drill into funding (V1), facility assets (V4), passenger impact (V3).
+
+<Callout tone="info" title="Gap fills embedded">
+  Cyber resilience, climate resilience, and accessibility checks are required commissioning
+  actions — the research found these feature areas undocumented in public program sources.
+</Callout>
+
+/* ============================================================
+   FILE: views/v3-passenger-journey.mdx
+   View V3 — Passenger Journey Operations
+   Serves: W3 Passenger Journey Modernization
+   Roles: terminal ops director, airline/TSA coordination, tech vendor
+   Refresh: realtime observations (queue times); weekly adoption rollup
+   ---------------------------------------------------------- */
+
+---
+title: Passenger Journey Operations
+viewId: V3
+workflows: [W3-PassengerJourneyModernization]
+---
+
+import { StatCard, DataTable, StateChip, Callout, Formula, StateTable } from "../components/ui.mdx";
+
+# Passenger Journey Operations
+
+Purpose: manage the H→C→D→F chain — kerbside, check-in, bag drop,
+security, gate, boarding — against a journey-time budget, using live
+queue observations rather than periodic manual surveys.
+
+<StatCard label="Journey time (median, curbside→gate)" value="41 min" delta="-6 min" trend="down" caption="Baseline 47 min before self-bag-drop + biometric boarding." />
+<StatCard label="Bag drop, observed avg" value="72 s" delta="-30% vs manual" trend="down" caption="OAG-documented target: ≈70 s with biometric photo-matching." />
+<StatCard label="Biometric adoption (departing pax)" value="54%" delta="+11 pts" trend="up" caption="Adoption formula: biometricPax / totalPax per stage." />
+
+## Stage budget vs observed
+
+<DataTable
+  caption="Process stages at sample airport (DEL T3 profile)"
+  columns={[
+    { key: "stage", label: "Stage" },
+    { key: "budget", label: "Budget" },
+    { key: "observed", label: "Observed (7-day avg)" },
+    { key: "rho", label: "Utilization ρ" },
+    { key: "tech", label: "Tech" },
+    { key: "state", label: "Capability state", render: (r) => <StateChip state={r.state} kind={r.tone} /> }
+  ]}
+  rows={[
+    { id: "s1", stage: "Check-in kiosks", budget: "≤ 4 min", observed: "3.2 min", rho: "0.71", tech: "kiosk + AI flow", state: "Live", tone: "healthy" },
+    { id: "s2", stage: "Self bag drop", budget: "≤ 70 s", observed: "72 s", rho: "0.83", tech: "biometric SBD", state: "Optimizing", tone: "healthy" },
+    { id: "s3", stage: "Security screening", budget: "≤ 12 min", observed: "14.5 min", rho: "0.91", tech: "CT screening (partial)", state: "Scaling", tone: "warn" },
+    { id: "s4", stage: "Boarding", budget: "≤ 20 min", observed: "17 min", rho: "0.66", tech: "biometric gate", state: "Live", tone: "healthy" },
+    { id: "s5", stage: "Border e-gates (arrivals)", budget: "≤ 90 s", observed: "84 s", rho: "0.78", tech: "e-gates", state: "Live", tone: "healthy" }
+  ]}
+/>
+
+## Formulas in play
+
+<Formula name="Journey time" expr="T = Σ stage times vs stage budget" />
+<Formula name="Little's Law" expr="L = λ · W" where="L avg queue length, λ arrival rate, W avg wait" />
+<Formula name="Checkpoint utilization" expr="ρ = λ / (c·μ); stable if ρ < 1; Wq ≈ Lq / λ" />
+<Formula name="Bag-drop gain" expr="Δt = t_manual − t_sbd (≈30% per OAG); μ' = 1 / t_sbd" />
+<Formula name="Satisfaction link" expr="corr(stage times, ASQ scores) via BenchmarkSystem (ACI ASQ: ~707k live pax surveys)" />
+
+## Pilot gate — security CT screening (sample)
+
+<StateTable
+  caption="Capability.Lifecycle gate used by W3"
+  transitions={[
+    { current: "Piloting", event: "PilotComplete", guard: "≥ 90 days observations", action: "compute ΔT, ΔWq, ASQ delta", next: "Evaluating" },
+    { current: "Evaluating", event: "GatePass", guard: "Δ stage time ≥ 20%; accessibility conformance passed", action: "approve scale plan", next: "Scaling" },
+    { current: "Evaluating", event: "GateFail", guard: "—", action: "post-mortem; vendor re-engagement", next: "PilotFailed" },
+    { current: "any", event: "RollbackTriggered", guard: "safety/privacy incident", action: "revert to manual process", next: "RolledBack" }
+  ]}
+/>
+
+## Workflow actions supported
+
+- Ingest realtime stage-time observations (from V7 feeds).
+- Advance pilot→scale gates with primary evidence (no vendor claims).
+- Trigger optimization loop (AI lane/staff rebalancing) on drift alerts.
+- Record accessibility conformance at each gate review (gap-fill).
+- View unofficial claims (single-token journey adoption) as Unofficial — never alert on them.
+
+<Callout tone="unofficial" title="Unofficial — flagged, not trusted">
+  "Nearly half of airports will have biometric identity management by end of 2026" is a
+  vendor-blog statistic. It renders with an Unofficial chip and is excluded from alerting
+  and gate decisions until an ACI/IATA primary statistic corroborates it.
+</Callout>
+
+/* ============================================================
+   FILE: views/v4-atc-airfield.mdx
+   View V4 — ATC & Airfield Modernization Tracker
+   Serves: W4 ATC & Airfield Modernization Deployment (BNATCS)
+   Roles: FAA program office, prime integrator, controllers
+   Refresh: deployment events; daily delay attribution
+   ---------------------------------------------------------- */
+
+---
+title: ATC & Airfield Modernization
+viewId: V4
+workflows: [W4-ATCAirfieldDeployment]
+---
+
+import { StatCard, DataTable, StateChip, Callout, Formula } from "../components/ui.mdx";
+
+# ATC & Airfield Modernization Tracker
+
+Purpose: break the BNATCS fact-sheet's aggregate counts into per-site,
+per-lifecycle deployment status — and track the outcome metric
+(equipment-related delay minutes) that the program exists to cut.
+Phase 1 target: December 2028, $12.5B appropriated (July 2025).
+
+<StatCard label="National deployment progress (lots)" value="31%" delta="+8 pts" trend="up" caption="Delivered sites / planned sites across equipment classes." />
+<StatCard label="Equipment-related delay minutes" value="+300% vs 2010–24 avg" trend="down" caption="2025 baseline the program must reduce; trajectory tracked per delivery." />
+<StatCard label="Cutover success (first pass)" value="94%" caption="Cut-overs staged in overnight low-traffic windows with rollback plans." />
+
+## National equipment lots
+
+<DataTable
+  caption="BNATCS lots and delivery status (from FAA fact sheet)"
+  columns={[
+    { key: "lot", label: "Equipment lot" },
+    { key: "total", label: "Planned" },
+    { key: "done", label: "Delivered" },
+    { key: "sites", label: "Sites affected" },
+    { key: "state", label: "Program state", render: (r) => <StateChip state={r.state} kind={r.tone} /> }
+  ]}
+  rows={[
+    { id: "l1", lot: "New radars", total: "612", done: "180", sites: "national", state: "Streaming installs", tone: "healthy" },
+    { id: "l2", lot: "New radios", total: "27,625", done: "8,900", sites: "national", state: "Streaming installs", tone: "healthy" },
+    { id: "l3", lot: "Digital voice switches", total: "462", done: "150", sites: "national", state: "Streaming installs", tone: "healthy" },
+    { id: "l4", lot: "High-speed network connections", total: "5,170", done: "2,300", sites: "fiber/satellite/wireless", state: "Priority (telecom first)", tone: "healthy" },
+    { id: "l5", lot: "Airport surface radars (replacement)", total: "44 sites", done: "12", sites: "44 airports", state: "CutoverReady", tone: "neutral" },
+    { id: "l6", lot: "Surface Awareness Initiative", total: "200 sites", done: "60", sites: "200 airports", state: "Surveyed", tone: "neutral" },
+    { id: "l7", lot: "Terminal Flight Data Manager", total: "89 sites", done: "20", sites: "89 airports", state: "Installed", tone: "neutral" },
+    { id: "l8", lot: "Tower EIDS", total: "435 towers", done: "130", sites: "435 ATCTs", state: "Streaming installs", tone: "healthy" },
+    { id: "l9", lot: "Tower Simulation Systems", total: "113 towers", done: "40", sites: "113 ATCTs", state: "Streaming installs", tone: "healthy" },
+    { id: "l10", lot: "Consolidated ARTCC (first new since 1960s)", total: "1", done: "0", sites: "—", state: "DefectHold→survey", tone: "warn" },
+    { id: "l11", lot: "Alaska weather stations / cameras", total: "110 / 64", done: "45 / 22", sites: "AK", state: "Streaming installs", tone: "healthy" }
+  ]}
+/>
+
+## Airfield works coordination
+
+Airfield initiatives (runway/taxiway reconfiguration, category B) schedule closures in
+overnight opportunistic windows and combine works (e.g., runway + taxiway N closures)
+to minimize traffic impact — the same window discipline used for ATC cut-overs.
+
+## Formulas in play
+
+<Formula name="Deployment progress" expr="P = sitesDelivered / sitesPlanned (per lot and national)" />
+<Formula name="Delay trajectory" expr="D(t) = D_base × (1 − k·P)" where="D_base = 2025 equipment-delay minutes; fit attribution factor k as lots deliver" />
+<Formula name="Cutover risk" expr="Risk = complexityScore × trafficExposure(hours) × rollbackDuration" />
+<Formula name="Window efficiency" expr="η = equipmentInstalled / (closureHours × crewSize)" />
+
+## Workflow actions supported
+
+- Record lot/site state transitions: Allocated → Surveyed → Installed → Integrated → CutoverReady → CutoverComplete → Verified → SteadyState.
+- Schedule cut-over windows against low-traffic forecasts (RT feeds via V7).
+- Auto-rollback on defect; re-entry at CutoverReady after fix.
+- Track delay attribution against the 2025 baseline; publish to GAO-style status views.
+
+<Callout tone="warn" title="Reported, not confirmed">
+  Secondary reporting cites ~$16B Phase-1 costs and a ~$3.5B shortfall; GAO-26-107992
+  flags weak cost/schedule planning. This view carries the official GAO/FAA figures and
+  marks the shortfall as "reported" until confirmed by a primary source.
+</Callout>
+
+/* ============================================================
+   FILE: views/v5-sustainability.mdx
+   View V5 — Sustainability Transition Dashboard
+   Serves: W5 Sustainability & Energy Transition
+   Roles: sustainability lead, facilities, FAA grant office
+   Refresh: monthly inventories; realtime energy (where metered)
+   ---------------------------------------------------------- */
+
+---
+title: Sustainability Transition
+viewId: V5
+workflows: [W5-SustainabilityTransition]
+---
+
+import { StatCard, DataTable, StateChip, Callout, Formula } from "../components/ui.mdx";
+
+# Sustainability Transition Dashboard
+
+Purpose: run the G-constrains-B/C/H/I relation — keep every airport's
+emissions on a measured glidepath to its net-zero date, and keep
+physical modernization (terminals, fleets, ground access) inside the
+carbon budget.
+
+<StatCard label="Scope 1+2 emissions vs baseline" value="−38%" delta="on glidepath" trend="down" caption="Baseline 2019; glidepath to net-zero 2040 (Denver-style commitment; industry 2050)." />
+<StatCard label="ZEV ground fleet" value="17% → 100% by 2030" caption="Heathrow reference point; electric buses also deployed at LAX and HKG." />
+<StatCard label="Energy intensity" value="5.9 kWh/pax" delta="-0.4" trend="down" caption="kWh per passenger; low-energy terminal design ecosystem." />
+
+## Portfolio of initiatives (kind: sustainability)
+
+<DataTable
+  caption="Sustainability initiatives by state"
+  columns={[
+    { key: "name", label: "Initiative" },
+    { key: "airport", label: "Airport" },
+    { key: "type", label: "Type" },
+    { key: "impact", label: "Emissions impact" },
+    { key: "state", label: "State", render: (r) => <StateChip state={r.state} kind={r.tone} /> }
+  ]}
+  rows={[
+    { id: "g1", name: "Gate electrification (PCA + 400 Hz GPU)", airport: "DEN", type: "electrification", impact: "−41 ktCO2e/yr", state: "Implementing", tone: "healthy" },
+    { id: "g2", name: "Geothermal HVAC retrofit", airport: "SDF", type: "hvac", impact: ">80% facility emissions cut (study)", state: "Verifying", tone: "neutral" },
+    { id: "g3", name: "ZEV fleet transition", airport: "LHR", type: "fleet", impact: "17% → 100% by 2030", state: "Implementing", tone: "healthy" },
+    { id: "g4", name: "On-airport solar + microgrid", airport: "sample", type: "energy (gap-fill)", impact: "resilience + Scope 2 cut", state: "Targeted", tone: "neutral" },
+    { id: "g5", name: "SAF supply-chain partnership", airport: "multi", type: "fuel", impact: "university program ($35M FAA)", state: "Targeted", tone: "neutral" }
+  ]}
+/>
+
+## Formulas in play
+
+<Formula name="Emissions inventory" expr="E = Σ(fuel × EF) + electricity × gridEF  (Scope 1+2, tCO2e)" />
+<Formula name="Fleet electrification" expr="ZEV% = ZEV_count / fleetTotal" />
+<Formula name="Glidepath" expr="annualΔ = (E_t − E_target) / yearsRemaining; OnTrack if E_t ≤ glidepath(E_t)" />
+<Formula name="Energy intensity" expr="kWh / passenger" />
+<Formula name="Embodied carbon (new builds)" expr="kgCO2e / m² vs IATA Embodied Carbon Tool benchmark (terminals, runways, car parks)" />
+<Formula name="Grant leverage" expr="Leverage = totalProgramCost / federalGrant" where="e.g., $327M FAA electrification grants" />
+
+## Workflow actions supported
+
+- Register inventories and targets; set glidepath.
+- Link initiatives to funding (V1) and delivery (V2).
+- Record verification cycles; flip OnTrack/OffTrack with alerts.
+- Enforce embodied-carbon checks on capital builds (feeds W2 commissioning).
+- Ingest ACI environmental benchmarking data (V7) for cohort percentiles.
+
+<Callout tone="info" title="Gap fills embedded">
+  On-airport renewables/microgrids and circular construction waste were absent from the
+  public sources surveyed; they are included here as flagged gap initiatives so the
+  compiled picture of category G is complete.
+</Callout>
+
+/* ============================================================
+   FILE: views/v6-maturity-radar.mdx
+   View V6 — Technology Maturity Radar
+   Serves: W6 Smart-Tech Adoption
+   Roles: CIO / innovation office, airport executive
+   Refresh: assessment cycles (quarterly); pilot events
+   ---------------------------------------------------------- */
+
+---
+title: Technology Maturity Radar
+viewId: V6
+workflows: [W6-SmartTechAdoption]
+---
+
+import { StatCard, MetricRadar, DataTable, StateChip, Callout, Formula } from "../components/ui.mdx";
+
+# Technology Maturity Radar
+
+Purpose: manage the D-enables-everything relation — move infratech out of
+"pilot purgatory" with evidence gates. The research found most smart-airport
+claims are vendor-sourced; this view separates measured maturity from marketing.
+
+<StatCard label="Composite maturity (0–4)" value="2.3" delta="+0.4 YoY" trend="up" caption="Weighted: Σ wᵢ·sᵢ / Σ wᵢ across dimensions." />
+<StatCard label="Cohort z-score" value="+0.8σ" caption="Vs peer hub cohort via BenchmarkSystem." />
+<StatCard label="Pilots in gate review" value="4" caption="2 blocked on DataReadinessHold (platform prerequisite)." />
+
+<MetricRadar
+  max={4}
+  dimensions={[
+    { name: "AI flow management", score: 2, note: "pilot passed: queue time −15%" },
+    { name: "Predictive maintenance", score: 3, note: "sensors on belts, escalators, HVAC" },
+    { name: "Digital twin", score: 1, note: "pilot" },
+    { name: "Biometric identity", score: 2, note: "boarding + bag drop live at 2 terminals" },
+    { name: "Data platform", score: 1, note: "DataReadinessHold for 2 pilots" }
+  ]}
+/>
+
+## Pilot gates
+
+<DataTable
+  caption="Active pilots with gate status"
+  columns={[
+    { key: "pilot", label: "Pilot" },
+    { key: "kpi", label: "KPI (primary evidence)" },
+    { key: "threshold", label: "Gate" },
+    { key: "payback", label: "Payback" },
+    { key: "state", label: "State", render: (r) => <StateChip state={r.state} kind={r.tone} /> }
+  ]}
+  rows={[
+    { id: "p1", pilot: "AI lane/staff rebalancing", kpi: "queue time −15%", threshold: "≥ 15% + evidence", payback: "2.1 yr", state: "Scaled", tone: "healthy" },
+    { id: "p2", pilot: "Predictive maintenance (BHS)", kpi: "unplanned downtime −22%", threshold: "≥ 20%", payback: "1.8 yr", state: "Embedded", tone: "healthy" },
+    { id: "p3", pilot: "Terminal digital twin", kpi: "planning cycle −30%", threshold: "≥ 20%", payback: "4.5 yr", state: "Piloting", tone: "neutral" },
+    { id: "p4", pilot: "Single-token journey", kpi: "unofficial claim only", threshold: "insufficient evidence", payback: "—", state: "DataReadinessHold", tone: "warn" }
+  ]}
+/>
+
+## Formulas in play
+
+<Formula name="Composite maturity" expr="M = Σ wᵢ·sᵢ / Σ wᵢ, sᵢ ∈ [0,4]" />
+<Formula name="Cohort gap" expr="z = (M_airport − μ_cohort) / σ_cohort" />
+<Formula name="Payback" expr="P = capex / annualBenefit" />
+<Formula name="Adoption curve" expr="A(t) = 1 − e^(−kt)" where="fit k from deployment telemetry, not vendor decks" />
+
+## Workflow actions supported
+
+- Record assessment scores with evidence links (primary sources only).
+- Move pilots through: PilotApproved → Piloting → GateReview → Scaled → Embedded.
+- Block pilots at DataReadinessHold until the data platform prerequisite is met.
+- Mark vendor-only capabilities as Unofficial; exclude from composite scoring.
+
+<Callout tone="unofficial" title="Evidence discipline">
+  McKinsey's "6–8% EBITDA uplift" is a consultancy estimate, not an audited result —
+  it renders as an aspiration label. Gate decisions use primary measurements
+  (queue deltas, downtime, ASQ movement) exclusively.
+</Callout>
+
+/* ============================================================
+   FILE: views/v7-data-hub.mdx
+   View V7 — Realtime Data Hub
+   Serves: W7 Realtime Data Compilation & Benchmarking (feeds V1–V6)
+   Roles: data engineer, analyst, all view consumers
+   Refresh: continuous (feed heartbeats); catalog daily
+   ---------------------------------------------------------- */
+
+---
+title: Realtime Data Hub
+viewId: V7
+workflows: [W7-RealtimeDataCompilation]
+---
+
+import { StatCard, DataTable, StateChip, Callout, Formula } from "../components/ui.mdx";
+
+# Realtime Data Hub
+
+Purpose: the compilation layer — one catalog of global realtime and benchmark
+sources for airports, with feed health, normalization status, and airport
+drill-down. Every other view reads through this hub.
+
+<StatCard label="Feeds streaming" value="13 / 14" caption="One Degraded (staleness breach); zero Quarantined." />
+<StatCard label="Aggregate completeness (24h)" value="99.2%" caption="Alert at C < 0.95 per window." />
+<StatCard label="Airports resolved (entity resolution)" value="2,817" caption="ACI World Airport Traffic Dataset coverage; codes via OurAirports reference." />
+
+## Source catalog & health
+
+<DataTable
+  caption="Realtime + benchmark sources (global)"
+  columns={[
+    { key: "name", label: "Source" },
+    { key: "scope", label: "Coverage" },
+    { key: "data", label: "Data" },
+    { key: "cadence", label: "Cadence" },
+    { key: "state", label: "Feed state", render: (r) => <StateChip state={r.state} kind={r.tone} /> }
+  ]}
+  rows={[
+    { id: "d1", name: "FAA SWIM (SFDPS, STDDS)", scope: "US NAS", data: "flight plans, traffic, surveillance", cadence: "RT", state: "Streaming", tone: "healthy" },
+    { id: "d2", name: "FAA NOTAM (SWIM/search)", scope: "US + world", data: "closures, construction", cadence: "RT", state: "Streaming", tone: "healthy" },
+    { id: "d3", name: "AviationWeather.gov Data API", scope: "Global", data: "METAR/TAF", cadence: "RT", state: "Streaming", tone: "healthy" },
+    { id: "d4", name: "OpenSky Network API", scope: "Global ADS-B", data: "live positions (research)", cadence: "RT", state: "Streaming", tone: "healthy" },
+    { id: "d5", name: "ADS-B Exchange", scope: "Global", data: "unfiltered ADS-B", cadence: "RT", state: "Streaming", tone: "healthy" },
+    { id: "d6", name: "Flightradar24 API", scope: "Global", data: "positions, airport info", cadence: "RT", state: "Degraded", tone: "warn" },
+    { id: "d7", name: "FlightAware AeroAPI", scope: "Global", data: "status, predictive ETA", cadence: "RT", state: "Streaming", tone: "healthy" },
+    { id: "d8", name: "AirLabs", scope: "Global", data: "tracker, schedules, routes", cadence: "RT/NRT", state: "Streaming", tone: "healthy" },
+    { id: "d9", name: "Aviationstack", scope: "Global", data: "flight status", cadence: "NRT", state: "Streaming", tone: "healthy" },
+    { id: "d10", name: "Aviation Edge (NOTAM)", scope: "Global", data: "flights, NOTAM, airport DB", cadence: "NRT", state: "Streaming", tone: "healthy" },
+    { id: "d11", name: "EUROCONTROL NM/DDR", scope: "Europe", data: "ATFM delays, traffic", cadence: "RT/BATCH", state: "Connected", tone: "neutral" },
+    { id: "d12", name: "Airport operator APIs", scope: "per airport", data: "arrivals/departures", cadence: "RT", state: "Streaming", tone: "healthy" },
+    { id: "d13", name: "CheckWX / AVWX", scope: "Global", data: "parsed METAR/TAF", cadence: "RT", state: "Streaming", tone: "healthy" },
+    { id: "d14", name: "BTS TranStats", scope: "US", data: "enplanements, on-time, fares", cadence: "BATCH", state: "Streaming", tone: "healthy" },
+    { id: "d15", name: "ACI World Dataset", scope: "2,817 airports", data: "pax/cargo/movements", cadence: "BATCH", state: "Streaming", tone: "healthy" },
+    { id: "d16", name: "Cirium OTP / OAG", scope: "Global", data: "on-time performance", cadence: "BATCH", state: "Streaming", tone: "healthy" },
+    { id: "d17", name: "OurAirports", scope: "Global", data: "static airport reference", cadence: "BATCH", state: "Streaming", tone: "healthy" }
+  ]}
+/>
+
+## Airport drill-down (sample: JFK)
+
+- **Live**: departures/arrivals board (SWIM/AeroAPI); METAR; NOTAMs (active construction on taxiway N overnight).
+- **Delivery context**: 3 initiatives in flight (V2), $45B PANYNJ capital plan window (V1).
+- **Benchmarks**: ACI top-20 passenger rank; ASQ-rated; OTP percentile in hub cohort (z = +1.2σ).
+- **Sustainability**: inventory year 2025; glidepath OnTrack (V5).
+
+## Formulas in play
+
+<Formula name="Staleness" expr="S = now − lastEventTs; breach if S > 2 × cadenceSLA → Degraded" />
+<Formula name="Completeness" expr="C = received / expected per window; alert C < 0.95" />
+<Formula name="Dedupe" expr="key = (sourceId, externalId, eventTs)" />
+<Formula name="Airport aggregation" expr="movements(airport, hour) = count distinct flight status events at airport" where="ADS-B feeds are aircraft-level; aggregate per airport" />
+<Formula name="Benchmark" expr="percentile p = |{x′ < x}| / n; z = (x − μ)/σ; I = Σ wⱼ·norm(metricⱼ), wⱼ = source credibility (1–5)" />
+<Formula name="Confidence propagation" expr="confidence(fact) = min(confidences of contributing sources)" />
+
+## Workflow actions supported
+
+- Register/provision connectors (Registered → Connected → Streaming).
+- Detect staleness and schema violations; quarantine and replay on fix.
+- Entity-resolve airports by IATA/ICAO (RelationResolverSystem); normalize units.
+- Compute cohort benchmarks and project view models for V1–V6.
+- Emit alerts (budget, schedule, staleness, queue, emissions, maturity).
+
+<Callout tone="info" title="Why this workflow exists">
+  No actual documentation in the field is realtime — ACI rankings are annual,
+  GAO snapshots are point-in-time, and operator pages are static. W7 + V7 turn
+  the compiled source catalog into living airport data.
+</Callout>
