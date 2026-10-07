@@ -1,6 +1,7 @@
 import { tool } from 'ai'
 import { z } from 'zod'
 import type { EcsJob } from '../../client/src/types/jobs.ts'
+import type { ILogger } from '../logging/logger.ts'
 import {
   US_AIRPORT_BASELINES,
   US_AUTHORITATIVE_SOURCES,
@@ -13,6 +14,23 @@ export interface AiToolMetadata {
   reportTemplates: string[]
   formulaSummary: string
   description: string
+}
+
+export interface DeterministicSkillToolPassResult {
+  skillId: string
+  toolName: string
+  reportCode: string
+  keyMetricLabel: string
+  keyMetricValue: string
+  subConversationReply: string
+}
+
+export type DomainAiToolsMap = ReturnType<typeof createDomainAiTools>
+
+export interface IToolRegistry {
+  getMetadata(): AiToolMetadata[]
+  createExecutableTools(): DomainAiToolsMap
+  executeDeterministicSkillToolPass(job: EcsJob): DeterministicSkillToolPassResult
 }
 
 export const AI_TOOLS_METADATA: AiToolMetadata[] = [
@@ -212,7 +230,19 @@ export function calculateErlangCMetrics(params: {
   }
 }
 
-export function createDomainAiTools() {
+export function createDomainAiTools(logger?: ILogger) {
+  const logTool = (
+    toolId: string,
+    toolName: string,
+    meta: Record<string, unknown>,
+  ) => {
+    logger?.info('ai_tool.executed', {
+      toolId,
+      toolName,
+      ...meta,
+    })
+  }
+
   return {
     queryUsAirportBaselineAndSources: tool({
       description:
@@ -226,6 +256,11 @@ export function createDomainAiTools() {
       execute: async ({ airportIata }) => {
         const code = airportIata.trim().toUpperCase()
         const baseline = US_AIRPORT_BASELINES[code] ?? US_AIRPORT_BASELINES.JFK
+        logTool('T1', 'queryUsAirportBaselineAndSources', {
+          airportIata: code,
+          hubClass: baseline.hubClass,
+          confidence: 5,
+        })
         return {
           airport: baseline,
           provenance: [
@@ -826,16 +861,49 @@ export function runDeterministicSkillToolPass(job: EcsJob): {
         subConversationReply: `[Skill S6 · Tool evaluateInfratechAndCohortBenchmark → Report R3/R7] Scored ${code} primary-evidence infratech maturity at 3.1/4.0 (BHS predictive maintenance downtime −22%, AI lane flow −15%, 2.1 yr payback). Quarantined McKinsey 6–8% EBITDA claim as Unofficial (Credibility 4/5).`,
       }
     }
-    case 'W7':
-    default: {
-      return {
-        skillId: 'S7 · us-data-hub-cohort-benchmark',
-        toolName: 'evaluateInfratechAndCohortBenchmark + queryUsAirportBaselineAndSources',
-        reportCode: 'R7 / R9 / R10',
-        keyMetricLabel: 'SWIM SLA & Hub Cohort CPE',
-        keyMetricValue: `3.2s SLA · CPE $${baseline.cpeUsd}`,
-        subConversationReply: `[Skill S7 · Tool evaluateInfratechAndCohortBenchmark → Report R7/R10] Streaming FAA SWIM SFDPS & OpenSky ADS-B for ${code} at 3.2s SLA (completeness 99.4%). Reconciled FAA Form 5100-127 Large-Hub cohort: CPE $${baseline.cpeUsd}, Senior DSCR ${baseline.dscrSenior}x, HHI ${baseline.carrierHhi} (Credibility 5/5).`,
+      case 'W7':
+      default: {
+        return {
+          skillId: 'S7 · us-data-hub-cohort-benchmark',
+          toolName: 'evaluateInfratechAndCohortBenchmark + queryUsAirportBaselineAndSources',
+          reportCode: 'R7 / R9 / R10',
+          keyMetricLabel: 'SWIM SLA & Hub Cohort CPE',
+          keyMetricValue: `3.2s SLA · CPE $${baseline.cpeUsd}`,
+          subConversationReply: `[Skill S7 · Tool evaluateInfratechAndCohortBenchmark → Report R7/R10] Streaming FAA SWIM SFDPS & OpenSky ADS-B for ${code} at 3.2s SLA (completeness 99.4%). Reconciled FAA Form 5100-127 Large-Hub cohort: CPE $${baseline.cpeUsd}, Senior DSCR ${baseline.dscrSenior}x, HHI ${baseline.carrierHhi} (Credibility 5/5).`,
+        }
       }
     }
+  }
+
+/**
+ * SOLID Implementation of IToolRegistry with Constructor Dependency Injection for ILogger.
+ */
+export class UsAirportToolRegistry implements IToolRegistry {
+  private readonly logger: ILogger
+
+  constructor(logger: ILogger) {
+    this.logger = logger
+  }
+
+  getMetadata(): AiToolMetadata[] {
+    return AI_TOOLS_METADATA
+  }
+
+  createExecutableTools(): DomainAiToolsMap {
+    return createDomainAiTools(this.logger)
+  }
+
+  executeDeterministicSkillToolPass(job: EcsJob): DeterministicSkillToolPassResult {
+    const result = runDeterministicSkillToolPass(job)
+    this.logger.info('ai_skill.deterministic_pass_executed', {
+      jobId: job.id,
+      workflowCode: job.code,
+      airportIata: job.airportIata,
+      skillId: result.skillId,
+      toolName: result.toolName,
+      reportCode: result.reportCode,
+      keyMetricValue: result.keyMetricValue,
+    })
+    return result
   }
 }

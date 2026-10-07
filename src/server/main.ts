@@ -4,6 +4,8 @@ import { cors } from 'hono/cors'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { FileLogger } from './logging/logger.ts'
+import { UsAirportToolRegistry } from './ai/tools-registry.ts'
+import { UsAirportSkillRegistry } from './ai/skills-catalog.ts'
 import { PglitePgBossJobManager } from './services/job-repository.ts'
 import { InMemoryConnectionStore } from './services/connection-store.ts'
 import { SinglePurposeLlmJobRunner } from './services/job-agent-runner.ts'
@@ -27,9 +29,19 @@ const clientFileLogger = new FileLogger({
   source: 'client',
 })
 
+const toolRegistry = new UsAirportToolRegistry(serverLogger)
+const skillRegistry = new UsAirportSkillRegistry(toolRegistry, serverLogger)
 const connectionStore = new InMemoryConnectionStore(serverLogger)
-const jobAgentRunner = new SinglePurposeLlmJobRunner(connectionStore, serverLogger)
-const jobRepository = new PglitePgBossJobManager(serverLogger, jobAgentRunner)
+const jobAgentRunner = new SinglePurposeLlmJobRunner(
+  connectionStore,
+  skillRegistry,
+  serverLogger,
+)
+const jobRepository = new PglitePgBossJobManager(
+  serverLogger,
+  jobAgentRunner,
+  skillRegistry,
+)
 const chatService = new VercelAiChatService(
   jobRepository,
   connectionStore,
@@ -55,10 +67,10 @@ app.use('/api/*', async (c, next) => {
 })
 
 app.route('/api/jobs', createJobsRoutes(jobRepository, serverLogger))
-app.route('/api/connection', createConnectionRoutes(connectionStore))
-app.route('/api/chat', createChatRoutes(chatService))
+app.route('/api/connection', createConnectionRoutes(connectionStore, serverLogger))
+app.route('/api/chat', createChatRoutes(chatService, serverLogger))
 app.route('/api/logs', createLogsRoutes(clientFileLogger, serverLogger))
-app.route('/api/skills', createSkillsRoutes())
+app.route('/api/skills', createSkillsRoutes(skillRegistry, serverLogger))
 
 app.get('/api/health', (c) => {
   const conn = connectionStore.getPublicStatus()

@@ -3,11 +3,7 @@ import { createOpenAI } from '@ai-sdk/openai'
 import type { EcsJob } from '../../client/src/types/jobs.ts'
 import type { ILogger } from '../logging/logger.ts'
 import type { IConnectionStore } from './connection-store.ts'
-import {
-  getSkillForWorkflow,
-  getToolsForWorkflow,
-} from '../ai/skills-catalog.ts'
-import { runDeterministicSkillToolPass } from '../ai/tools-registry.ts'
+import type { ISkillRegistry } from '../ai/skills-catalog.ts'
 
 export interface JobExecutionCallbacks {
   onProgress: (patch: Partial<EcsJob>) => Promise<void>
@@ -27,10 +23,16 @@ export interface IJobAgentRunner {
  */
 export class SinglePurposeLlmJobRunner implements IJobAgentRunner {
   private readonly connectionStore: IConnectionStore
+  private readonly skillRegistry: ISkillRegistry
   private readonly logger: ILogger
 
-  constructor(connectionStore: IConnectionStore, logger: ILogger) {
+  constructor(
+    connectionStore: IConnectionStore,
+    skillRegistry: ISkillRegistry,
+    logger: ILogger,
+  ) {
     this.connectionStore = connectionStore
+    this.skillRegistry = skillRegistry
     this.logger = logger
   }
 
@@ -41,8 +43,8 @@ export class SinglePurposeLlmJobRunner implements IJobAgentRunner {
   ): Promise<void> {
     if (signal.aborted) return
 
-    const skill = getSkillForWorkflow(job.code)
-    const boundTools = getToolsForWorkflow(job.code)
+    const skill = this.skillRegistry.getSkillForWorkflow(job.code)
+    const boundTools = this.skillRegistry.getToolsForWorkflow(job.code)
 
     this.logger.info('job_agent.started', {
       jobId: job.id,
@@ -132,7 +134,7 @@ export class SinglePurposeLlmJobRunner implements IJobAgentRunner {
 
     if (signal.aborted) return
 
-    const toolPass = runDeterministicSkillToolPass(job)
+    const toolPass = this.skillRegistry.executeSkillToolPass(job)
     const nextProgress = Math.min(96, Math.max(job.progress + 8, 32))
 
     const assistantMsg = {
@@ -146,6 +148,14 @@ export class SinglePurposeLlmJobRunner implements IJobAgentRunner {
       job.chatHistory.length >= 6
         ? [...job.chatHistory.slice(0, 1), ...job.chatHistory.slice(-4), assistantMsg]
         : [...job.chatHistory, assistantMsg]
+
+    this.logger.info('job_agent.step_completed', {
+      jobId: job.id,
+      skillId: skill.id,
+      progress: nextProgress,
+      keyMetricLabel: toolPass.keyMetricLabel,
+      keyMetricValue: toolPass.keyMetricValue,
+    })
 
     await callbacks.onProgress({
       progress: nextProgress,

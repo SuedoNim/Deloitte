@@ -152,6 +152,7 @@ const US_SKILLS_LIST: SkillItem[] = [
 
 interface SkillsCatalogModalProps {
   onClose: () => void
+  onSelectSkill?: (skillId: string, workflowCode: WorkflowCode) => void
   onDispatchSkillJob: (payload: {
     code: WorkflowCode
     airportIata: string
@@ -189,7 +190,10 @@ export function SkillsCatalogModal(props: SkillsCatalogModalProps) {
                 role="tab"
                 aria-selected={selectedSkillId() === skill.id}
                 class={`filter-tab ${selectedSkillId() === skill.id ? 'is-active' : ''}`}
-                onClick={() => setSelectedSkillId(skill.id)}
+                onClick={() => {
+                  setSelectedSkillId(skill.id)
+                  props.onSelectSkill?.(skill.id, skill.workflowCode)
+                }}
               >
                 {skill.id} ({skill.workflowCode})
               </button>

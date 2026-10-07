@@ -20,12 +20,10 @@ interface CreateJobPayload {
   purpose?: string
 }
 
-export interface IEcsApiClient {
+interface IJobsApiClient {
   fetchJobs(): Promise<EcsJob[] | null>
   createJob(payload: CreateJobPayload): Promise<{ job?: EcsJob; jobs?: EcsJob[] } | null>
   abortJob(jobId: string): Promise<{ job?: EcsJob; jobs?: EcsJob[] } | null>
-  fetchConnection(): Promise<PublicConnectionStatus | null>
-  saveConnection(config: ModelConnectionConfig): Promise<PublicConnectionStatus | null>
   subscribeJobsStream(handlers: {
     onOpen: () => void
     onJobsSync: (jobs: EcsJob[]) => void
@@ -33,6 +31,13 @@ export interface IEcsApiClient {
     onError: () => void
   }): () => void
 }
+
+interface IConnectionApiClient {
+  fetchConnection(): Promise<PublicConnectionStatus | null>
+  saveConnection(config: ModelConnectionConfig): Promise<PublicConnectionStatus | null>
+}
+
+export interface IEcsApiClient extends IJobsApiClient, IConnectionApiClient {}
 
 class HttpEcsApiClient implements IEcsApiClient {
   private readonly logger: IClientLogger
@@ -105,8 +110,17 @@ class HttpEcsApiClient implements IEcsApiClient {
     try {
       const res = await fetch('/api/connection')
       if (!res.ok) return null
-      return (await res.json()) as PublicConnectionStatus
-    } catch {
+      const status = (await res.json()) as PublicConnectionStatus
+      this.logger.info('client.connection_fetched', {
+        baseUrl: status.baseUrl,
+        modelId: status.modelId,
+        hasToken: status.hasToken,
+      })
+      return status
+    } catch (err) {
+      this.logger.error('client.connection_fetch_failed', {
+        error: err instanceof Error ? err.message : String(err),
+      })
       return null
     }
   }
@@ -164,6 +178,11 @@ class HttpEcsApiClient implements IEcsApiClient {
       try {
         const parsed = JSON.parse((event as MessageEvent).data) as JobSubChatUpdate
         if (parsed?.jobId && parsed?.subConversationMessage) {
+          this.logger.debug('client.sse_subchat_update_received', {
+            jobId: parsed.jobId,
+            code: parsed.code,
+            progress: parsed.progress,
+          })
           handlers.onJobChatUpdate(parsed)
         }
       } catch {
@@ -172,6 +191,7 @@ class HttpEcsApiClient implements IEcsApiClient {
     })
 
     eventSource.onerror = () => {
+      this.logger.warn('client.sse_stream_reconnecting')
       handlers.onError()
     }
 

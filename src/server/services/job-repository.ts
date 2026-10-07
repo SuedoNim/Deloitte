@@ -8,7 +8,7 @@ import {
 } from '../../client/src/types/jobs.ts'
 import type { ILogger } from '../logging/logger.ts'
 import type { IJobAgentRunner } from './job-agent-runner.ts'
-import { runDeterministicSkillToolPass } from '../ai/tools-registry.ts'
+import type { ISkillRegistry } from '../ai/skills-catalog.ts'
 
 type JobChatMessage = EcsJob['chatHistory'][number]
 
@@ -35,18 +35,33 @@ export interface UpdateJobInput {
   summary?: string
 }
 
-export interface IJobRepository {
-  init(): Promise<void>
+export interface IJobReader {
   getAll(): EcsJob[]
   getById(id: string): EcsJob | undefined
+}
+
+export interface IJobWriter {
   create(input: CreateJobInput): Promise<EcsJob>
   update(id: string, patch: UpdateJobInput): Promise<EcsJob | undefined>
   abort(id: string, reason?: string): Promise<EcsJob | undefined>
   remove(id: string): Promise<boolean>
-  tickProgress(): Promise<boolean>
+}
+
+export interface IJobEventStream {
   subscribe(listener: JobsSubscriber): () => void
   subscribeProgressUpdates(listener: JobProgressSubscriber): () => void
 }
+
+export interface IJobLifecycleScheduler {
+  init(): Promise<void>
+  tickProgress(): Promise<boolean>
+}
+
+export interface IJobRepository
+  extends IJobReader,
+    IJobWriter,
+    IJobEventStream,
+    IJobLifecycleScheduler {}
 
 const JOB_QUEUE_NAME = 'ecs-llm-job'
 
@@ -134,6 +149,7 @@ export class PglitePgBossJobManager implements IJobRepository {
   private readonly boss: PgBoss
   private readonly logger: ILogger
   private readonly agentRunner: IJobAgentRunner
+  private readonly skillRegistry: ISkillRegistry
   private readonly listeners = new Set<JobsSubscriber>()
   private readonly progressListeners = new Set<JobProgressSubscriber>()
   private readonly activeControllers = new Map<string, AbortController>()
@@ -146,10 +162,12 @@ export class PglitePgBossJobManager implements IJobRepository {
   constructor(
     logger: ILogger,
     agentRunner: IJobAgentRunner,
+    skillRegistry: ISkillRegistry,
     seedJobs: EcsJob[] = INITIAL_ECS_JOBS,
   ) {
     this.logger = logger
     this.agentRunner = agentRunner
+    this.skillRegistry = skillRegistry
     this.jobsCache = structuredClone(seedJobs)
     this.nextSequence = 4100 + seedJobs.length
 
@@ -631,7 +649,7 @@ export class PglitePgBossJobManager implements IJobRepository {
 
       const targetJob = this.jobsCache[chosenIdx]
       const nowTime = new Date().toISOString().slice(11, 19)
-      const toolPass = runDeterministicSkillToolPass(targetJob)
+      const toolPass = this.skillRegistry.executeSkillToolPass(targetJob)
 
       const subMsgText = `[${targetJob.progress}%] ${toolPass.subConversationReply}`
 
@@ -662,6 +680,15 @@ export class PglitePgBossJobManager implements IJobRepository {
       if (this.initialized) {
         await this.persistJobToDb(updatedWithSubChat)
       }
+
+      this.logger.info('job.subchat_progress_tick', {
+        jobId: updatedWithSubChat.id,
+        code: updatedWithSubChat.code,
+        airportIata: updatedWithSubChat.airportIata,
+        progress: updatedWithSubChat.progress,
+        skillId: toolPass.skillId,
+        reportCode: toolPass.reportCode,
+      })
 
       this.emitProgressUpdate(updatedWithSubChat, subMsgText, nowTime)
     }

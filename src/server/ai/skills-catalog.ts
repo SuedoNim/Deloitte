@@ -1,8 +1,12 @@
-import type { WorkflowCode } from '../../client/src/types/jobs.ts'
+import type { EcsJob, WorkflowCode } from '../../client/src/types/jobs.ts'
+import type { ILogger } from '../logging/logger.ts'
 import {
   AI_TOOLS_METADATA,
   createDomainAiTools,
   type AiToolMetadata,
+  type DeterministicSkillToolPassResult,
+  type DomainAiToolsMap,
+  type IToolRegistry,
 } from './tools-registry.ts'
 
 export interface AiSkillDefinition {
@@ -15,6 +19,17 @@ export interface AiSkillDefinition {
   boundToolNames: string[]
   description: string
   systemInstruction: string
+}
+
+export interface ISkillRegistry {
+  getAllSkills(): AiSkillDefinition[]
+  getSkillForWorkflow(code: WorkflowCode): AiSkillDefinition
+  getToolsForWorkflow(code: WorkflowCode): DomainAiToolsMap
+  getCatalogSummary(): {
+    skills: AiSkillDefinition[]
+    tools: AiToolMetadata[]
+  }
+  executeSkillToolPass(job: EcsJob): DeterministicSkillToolPassResult
 }
 
 export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
@@ -199,5 +214,63 @@ export function getCatalogSummary(): {
   return {
     skills: AI_SKILLS_CATALOG,
     tools: AI_TOOLS_METADATA,
+  }
+}
+
+/**
+ * SOLID Implementation of ISkillRegistry with Constructor Dependency Injection
+ * for IToolRegistry and ILogger.
+ */
+export class UsAirportSkillRegistry implements ISkillRegistry {
+  private readonly toolRegistry: IToolRegistry
+  private readonly logger: ILogger
+
+  constructor(toolRegistry: IToolRegistry, logger: ILogger) {
+    this.toolRegistry = toolRegistry
+    this.logger = logger
+  }
+
+  getAllSkills(): AiSkillDefinition[] {
+    return AI_SKILLS_CATALOG
+  }
+
+  getSkillForWorkflow(code: WorkflowCode): AiSkillDefinition {
+    const skill = getSkillForWorkflow(code)
+    this.logger.debug('ai_skill.resolved', {
+      workflowCode: code,
+      skillId: skill.id,
+      skillSlug: skill.slug,
+    })
+    return skill
+  }
+
+  getToolsForWorkflow(code: WorkflowCode): DomainAiToolsMap {
+    const skill = this.getSkillForWorkflow(code)
+    const allTools = this.toolRegistry.createExecutableTools()
+    const filtered: Record<string, unknown> = {}
+    for (const name of skill.boundToolNames) {
+      if (name in allTools) {
+        filtered[name] = allTools[name as keyof typeof allTools]
+      }
+    }
+    return filtered as DomainAiToolsMap
+  }
+
+  getCatalogSummary(): {
+    skills: AiSkillDefinition[]
+    tools: AiToolMetadata[]
+  } {
+    this.logger.info('ai_skill.catalog_queried', {
+      skillsCount: AI_SKILLS_CATALOG.length,
+      toolsCount: this.toolRegistry.getMetadata().length,
+    })
+    return {
+      skills: AI_SKILLS_CATALOG,
+      tools: this.toolRegistry.getMetadata(),
+    }
+  }
+
+  executeSkillToolPass(job: EcsJob): DeterministicSkillToolPassResult {
+    return this.toolRegistry.executeDeterministicSkillToolPass(job)
   }
 }

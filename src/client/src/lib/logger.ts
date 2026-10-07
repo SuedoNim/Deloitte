@@ -2,9 +2,10 @@ export interface IClientLogger {
   info(event: string, meta?: Record<string, unknown>): void
   warn(event: string, meta?: Record<string, unknown>): void
   error(event: string, meta?: Record<string, unknown>): void
+  debug(event: string, meta?: Record<string, unknown>): void
 }
 
-type LogLevel = 'info' | 'warn' | 'error'
+type LogLevel = 'info' | 'warn' | 'error' | 'debug'
 
 class RemoteFileClientLogger implements IClientLogger {
   private readonly endpoint: string
@@ -23,6 +24,10 @@ class RemoteFileClientLogger implements IClientLogger {
 
   error(event: string, meta?: Record<string, unknown>): void {
     this.dispatch('error', event, meta)
+  }
+
+  debug(event: string, meta?: Record<string, unknown>): void {
+    this.dispatch('debug', event, meta)
   }
 
   private dispatch(level: LogLevel, event: string, meta?: Record<string, unknown>): void {

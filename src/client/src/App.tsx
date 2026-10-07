@@ -179,6 +179,13 @@ export default function App() {
     } else {
       setMessages([...currentMsgs, digestMsg])
     }
+
+    clientLogger.debug('client.routine_digest_updated', {
+      jobId: update.jobId,
+      code: update.code,
+      airportIata: update.airportIata,
+      progress: update.progress,
+    })
   }
 
   onMount(() => {
@@ -415,10 +422,23 @@ export default function App() {
         mobileView={mobileView()}
         totalJobs={jobCounts().total}
         showConnectionBar={showConnectionBar()}
-        onSelectView={(v) => setMobileView(v)}
-        onToggleConnectionBar={() => setShowConnectionBar((v) => !v)}
-        onOpenSkillsModal={() => setIsSkillsModalOpen(true)}
-        onOpenDispatchModal={() => setIsDispatchModalOpen(true)}
+        onSelectView={(v) => {
+          setMobileView(v)
+          clientLogger.info('client.view_changed', { view: v })
+        }}
+        onToggleConnectionBar={() => {
+          const next = !showConnectionBar()
+          setShowConnectionBar(next)
+          clientLogger.info('client.connection_bar_toggled', { open: next })
+        }}
+        onOpenSkillsModal={() => {
+          setIsSkillsModalOpen(true)
+          clientLogger.info('client.skills_modal_opened')
+        }}
+        onOpenDispatchModal={() => {
+          setIsDispatchModalOpen(true)
+          clientLogger.info('client.dispatch_modal_opened')
+        }}
       />
 
       <div class="workspace-body">
@@ -444,7 +464,13 @@ export default function App() {
                 type="button"
                 class="btn-secondary"
                 aria-pressed={routineUpdatesEnabled()}
-                onClick={() => setRoutineUpdatesEnabled((v) => !v)}
+                onClick={() => {
+                  const next = !routineUpdatesEnabled()
+                  setRoutineUpdatesEnabled(next)
+                  clientLogger.info('client.routine_updates_toggled', {
+                    enabled: next,
+                  })
+                }}
               >
                 {routineUpdatesEnabled()
                   ? 'Routine Updates: On'
@@ -653,9 +679,20 @@ export default function App() {
 
       <Show when={isSkillsModalOpen()}>
         <SkillsCatalogModal
-          onClose={() => setIsSkillsModalOpen(false)}
+          onClose={() => {
+            setIsSkillsModalOpen(false)
+            clientLogger.info('client.skills_modal_closed')
+          }}
+          onSelectSkill={(skillId, workflowCode) => {
+            clientLogger.info('client.skill_selected', { skillId, workflowCode })
+          }}
           onDispatchSkillJob={async (payload) => {
             setIsSkillsModalOpen(false)
+            clientLogger.info('client.skill_job_dispatched', {
+              code: payload.code,
+              airportIata: payload.airportIata,
+              title: payload.title,
+            })
             await handleCreateJob(payload)
           }}
         />
