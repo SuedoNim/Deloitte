@@ -1,8 +1,13 @@
-import { generateText } from 'ai'
+import { generateText, stepCountIs } from 'ai'
 import { createOpenAI } from '@ai-sdk/openai'
-import type { EcsJob, JobChatMessage } from '../../client/src/types/jobs.ts'
+import type { EcsJob } from '../../client/src/types/jobs.ts'
 import type { ILogger } from '../logging/logger.ts'
 import type { IConnectionStore } from './connection-store.ts'
+import {
+  getSkillForWorkflow,
+  getToolsForWorkflow,
+} from '../ai/skills-catalog.ts'
+import { runDeterministicSkillToolPass } from '../ai/tools-registry.ts'
 
 export interface JobExecutionCallbacks {
   onProgress: (patch: Partial<EcsJob>) => Promise<void>
@@ -17,9 +22,8 @@ export interface IJobAgentRunner {
 }
 
 /**
- * Executes a single-purpose LLM chat for a specific EcsJob.
- * Designed following the Open/Closed Principle so the next stage's detailed
- * agent implementation can extend or replace this runner cleanly.
+ * Executes a single-purpose LLM chat for a specific EcsJob using its bound
+ * U.S. Airport Investment Intelligence AI Skill (S1–S7) and deterministic AI Tools (T1–T12).
  */
 export class SinglePurposeLlmJobRunner implements IJobAgentRunner {
   private readonly connectionStore: IConnectionStore
@@ -37,16 +41,22 @@ export class SinglePurposeLlmJobRunner implements IJobAgentRunner {
   ): Promise<void> {
     if (signal.aborted) return
 
+    const skill = getSkillForWorkflow(job.code)
+    const boundTools = getToolsForWorkflow(job.code)
+
     this.logger.info('job_agent.started', {
       jobId: job.id,
       purpose: job.purpose,
       ecsSystem: job.ecsSystem,
+      skillId: skill.id,
+      skillSlug: skill.slug,
+      boundTools: skill.boundToolNames,
     })
 
     const conn = this.connectionStore.resolveForRequest()
     const nowTime = () => new Date().toISOString().slice(11, 19)
 
-    // If an API token is configured, run a single-purpose LLM completion for this job's purpose
+    // If an API token is configured, run a single-purpose LLM completion equipped with the Skill & AI Tools
     if (conn.apiToken) {
       try {
         const provider = createOpenAI({
@@ -57,7 +67,15 @@ export class SinglePurposeLlmJobRunner implements IJobAgentRunner {
         const { text } = await generateText({
           model: provider(conn.modelId),
           abortSignal: signal,
-          system: `You are a single-purpose ECS Job Agent executing workflow ${job.code} (${job.ecsSystem}) for airport ${job.airportIata} (${job.airportIcao}). Focus strictly on fulfilling the job's single specific purpose concisely.`,
+          tools: boundTools,
+          stopWhen: stepCountIs(3),
+          system: [
+            skill.systemInstruction,
+            `Target U.S. Airport: ${job.airportIata} (${job.airportIcao} · ${job.airportName}).`,
+            `Single Specific Job Purpose: "${job.purpose}".`,
+            `Supported Standard Reports: ${skill.reportTemplates.join(', ')}.`,
+            `Call your bound AI tools (${skill.boundToolNames.join(', ')}) to compute verified U.S. figures and cite primary provenance (Credibility 1–5).`,
+          ].join('\n'),
           messages: job.chatHistory.map((m) => ({
             role: m.role,
             content: m.content,
@@ -66,9 +84,9 @@ export class SinglePurposeLlmJobRunner implements IJobAgentRunner {
 
         if (signal.aborted) return
 
-        const assistantMsg: JobChatMessage = {
+        const assistantMsg = {
           id: `msg-${Date.now()}`,
-          role: 'assistant',
+          role: 'assistant' as const,
           content: text,
           timestamp: nowTime(),
         }
@@ -82,7 +100,7 @@ export class SinglePurposeLlmJobRunner implements IJobAgentRunner {
             {
               id: `step-${Date.now()}`,
               timestamp: nowTime(),
-              stage: `${job.ecsSystem} LLM Evaluation`,
+              stage: `${skill.id} (${skill.slug}) Tool Execution`,
               detail: text.slice(0, 140),
               state: 'active',
             },
@@ -93,12 +111,13 @@ export class SinglePurposeLlmJobRunner implements IJobAgentRunner {
         if (signal.aborted) return
         this.logger.warn('job_agent.llm_fallback', {
           jobId: job.id,
+          skillId: skill.id,
           error: err instanceof Error ? err.message : String(err),
         })
       }
     }
 
-    // Staged single-purpose execution step when running without external API token
+    // Deterministic AI Skill + AI Tool execution pass when running without an external API key
     await new Promise<void>((resolve) => {
       const timer = setTimeout(resolve, 400)
       signal.addEventListener(
@@ -113,13 +132,13 @@ export class SinglePurposeLlmJobRunner implements IJobAgentRunner {
 
     if (signal.aborted) return
 
+    const toolPass = runDeterministicSkillToolPass(job)
     const nextProgress = Math.min(96, Math.max(job.progress + 8, 32))
-    const stageReply = `Executed ${job.ecsSystem} pass for purpose: "${job.purpose.slice(0, 90)}". Current telemetry: ${job.keyMetricLabel} = ${job.keyMetricValue} (${nextProgress}%).`
 
-    const assistantMsg: JobChatMessage = {
+    const assistantMsg = {
       id: `msg-${Date.now()}`,
-      role: 'assistant',
-      content: stageReply,
+      role: 'assistant' as const,
+      content: toolPass.subConversationReply,
       timestamp: nowTime(),
     }
 
@@ -130,6 +149,8 @@ export class SinglePurposeLlmJobRunner implements IJobAgentRunner {
 
     await callbacks.onProgress({
       progress: nextProgress,
+      keyMetricLabel: toolPass.keyMetricLabel,
+      keyMetricValue: toolPass.keyMetricValue,
       chatHistory: updatedHistory,
     })
   }

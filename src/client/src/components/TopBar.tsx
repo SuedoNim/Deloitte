@@ -4,6 +4,7 @@ interface TopBarProps {
   showConnectionBar: boolean
   onSelectView: (view: 'split' | 'jobs' | 'chat') => void
   onToggleConnectionBar: () => void
+  onOpenSkillsModal: () => void
   onOpenDispatchModal: () => void
 }
 
@@ -42,6 +43,13 @@ export function TopBar(props: TopBarProps) {
           onClick={() => props.onToggleConnectionBar()}
         >
           Model Connection
+        </button>
+        <button
+          type="button"
+          class="topbar-link"
+          onClick={() => props.onOpenSkillsModal()}
+        >
+          AI Skills & Tools (S1–S8)
         </button>
       </nav>
 

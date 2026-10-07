@@ -71,7 +71,7 @@ export class VercelAiChatService implements IChatService {
           airportIata: z
             .string()
             .default('JFK')
-            .describe('3-letter IATA airport code (e.g. JFK, DEN, LAX, ORD, DEL)'),
+            .describe('3-letter US IATA airport code (e.g. JFK, DEN, LAX, ORD, ATL, DFW, DCA)'),
         }),
         execute: async ({ title, purpose, code, airportIata }) => {
           const created = await this.jobRepository.create({
@@ -314,7 +314,7 @@ export class VercelAiChatService implements IChatService {
     const workflowMatch = stripped.match(/\b(W[1-7])\b/i)
     const detectedWorkflow = (workflowMatch?.[1]?.toUpperCase() as WorkflowCode) || undefined
 
-    const airportMatch = stripped.match(/\b(JFK|DEN|LAX|ORD|DEL|LHR|ATL|DFW)\b/i)
+    const airportMatch = stripped.match(/\b(JFK|DEN|LAX|ORD|ATL|DFW|DCA|SDF|GEG|EWR|LGA|SFO|MIA|SEA)\b/i)
     const detectedAirport = airportMatch?.[1]?.toUpperCase()
 
     // 1. REMOVE / DELETE JOB INTENT

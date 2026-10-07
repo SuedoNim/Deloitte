@@ -3,12 +3,14 @@ import { PgBoss } from 'pg-boss'
 import {
   INITIAL_ECS_JOBS,
   type EcsJob,
-  type JobChatMessage,
   type JobSubChatUpdate,
   type WorkflowCode,
 } from '../../client/src/types/jobs.ts'
 import type { ILogger } from '../logging/logger.ts'
 import type { IJobAgentRunner } from './job-agent-runner.ts'
+import { runDeterministicSkillToolPass } from '../ai/tools-registry.ts'
+
+type JobChatMessage = EcsJob['chatHistory'][number]
 
 export type JobsSubscriber = (jobs: EcsJob[]) => void
 export type JobProgressSubscriber = (update: JobSubChatUpdate) => void
@@ -53,7 +55,11 @@ const AIRPORT_LOOKUP: Record<string, { icao: string; name: string }> = {
   DEN: { icao: 'KDEN', name: 'Denver International' },
   LAX: { icao: 'KLAX', name: 'Los Angeles International' },
   ORD: { icao: 'KORD', name: 'Chicago O’Hare International' },
-  DEL: { icao: 'VIDP', name: 'Indira Gandhi International (T3)' },
+  ATL: { icao: 'KATL', name: 'Hartsfield-Jackson Atlanta International' },
+  DFW: { icao: 'KDFW', name: 'Dallas/Fort Worth International' },
+  DCA: { icao: 'KDCA', name: 'Ronald Reagan Washington National' },
+  SDF: { icao: 'KSDF', name: 'Louisville Muhammad Ali International' },
+  GEG: { icao: 'KGEG', name: 'Spokane International' },
 }
 
 const WORKFLOW_LOOKUP: Record<
@@ -625,11 +631,9 @@ export class PglitePgBossJobManager implements IJobRepository {
 
       const targetJob = this.jobsCache[chosenIdx]
       const nowTime = new Date().toISOString().slice(11, 19)
-      const activeStage =
-        targetJob.steps.find((s) => s.state === 'active') ??
-        targetJob.steps[targetJob.steps.length - 1]
+      const toolPass = runDeterministicSkillToolPass(targetJob)
 
-      const subMsgText = `[${targetJob.progress}%] ${targetJob.ecsSystem} (${activeStage?.stage ?? targetJob.lifecycleState}): ${targetJob.keyMetricLabel} verified at ${targetJob.keyMetricValue} for ${targetJob.airportIata}.`
+      const subMsgText = `[${targetJob.progress}%] ${toolPass.subConversationReply}`
 
       const newSubMessage: JobChatMessage = {
         id: `sub-${Date.now()}`,
@@ -649,6 +653,8 @@ export class PglitePgBossJobManager implements IJobRepository {
 
       const updatedWithSubChat: EcsJob = {
         ...targetJob,
+        keyMetricLabel: toolPass.keyMetricLabel,
+        keyMetricValue: toolPass.keyMetricValue,
         chatHistory: trimmedHistory,
       }
 

@@ -12,7 +12,7 @@
     "build": "npm run build:frontend",
     "dev:client": "npm run dev --workspace=src/client",
     "dev:server": "tsx watch src/server/main.ts",
-    "dev": "npm run build:frontend && tsx src/server/main.ts",
+    "dev": "tsx src/server/main.ts",
     "debug": "npm run build:frontend && tsx watch src/server/main.ts",
     "typecheck": "tsc -b src/client/tsconfig.json",
     "knip": "npm run knip --workspace=src/client",

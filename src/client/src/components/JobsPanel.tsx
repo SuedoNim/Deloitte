@@ -1,5 +1,46 @@
 import { For, Show } from 'solid-js'
-import type { EcsJob, JobStatus } from '../types/jobs'
+import type { EcsJob, JobStatus, WorkflowCode } from '../types/jobs'
+
+const WORKFLOW_SKILL_INFO: Record<
+  WorkflowCode,
+  { skill: string; reports: string; tools: string }
+> = {
+  W1: {
+    skill: 'S1 · us-funding-capital-stack',
+    reports: 'R1, R2, R4, R9',
+    tools: 'computeCapitalStackAndGap · computeAipGrantAndPfcCapacity · computeCreditAndAirlineRates',
+  },
+  W2: {
+    skill: 'S2 · capital-delivery-nepa-orat',
+    reports: 'R2, R3, R5, R6, R9',
+    tools: 'evaluateDemandTriggerAndBca · computeProjectEvmAndCsppWindow · evaluateAcrypOratReadinessGate',
+  },
+  W3: {
+    skill: 'S3 · passenger-flow-tsa-cbp',
+    reports: 'R6, R7, R10',
+    tools: 'computeErlangCQueueAndLaneTarget · queryUsAirportBaselineAndSources',
+  },
+  W4: {
+    skill: 'S4 · nas-bnatcs-airfield-cutover',
+    reports: 'R3, R5, R10',
+    tools: 'computeBnatcsCutoverRiskAndDelaySavings · computeProjectEvmAndCsppWindow',
+  },
+  W5: {
+    skill: 'S5 · sustainability-vale-egrid',
+    reports: 'R8, R9',
+    tools: 'computeEgridEmissionsAndGateElectrification · queryUsAirportBaselineAndSources',
+  },
+  W6: {
+    skill: 'S6 · infratech-maturity-roi',
+    reports: 'R3, R7',
+    tools: 'evaluateInfratechAndCohortBenchmark · queryUsAirportBaselineAndSources',
+  },
+  W7: {
+    skill: 'S7 · us-data-hub-cohort-benchmark',
+    reports: 'R7, R9, R10',
+    tools: 'evaluateInfratechAndCohortBenchmark · queryUsAirportBaselineAndSources',
+  },
+}
 
 interface JobsPanelProps {
   jobs: EcsJob[]
@@ -270,6 +311,16 @@ export function JobsPanel(props: JobsPanelProps) {
                       <div class="job-purpose-box">
                         <span class="job-section-label">Single Purpose:</span>{' '}
                         <span>{job.purpose}</span>
+                      </div>
+
+                      <div class="job-purpose-box">
+                        <span class="job-section-label">
+                          AI Skill ({WORKFLOW_SKILL_INFO[job.code].skill} · Reports{' '}
+                          {WORKFLOW_SKILL_INFO[job.code].reports}):
+                        </span>{' '}
+                        <span class="tabular-nums">
+                          Tools: {WORKFLOW_SKILL_INFO[job.code].tools}
+                        </span>
                       </div>
 
                       <div class="job-subchat-container" aria-label={`${job.id} sub-conversation`}>

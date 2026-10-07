@@ -175,20 +175,20 @@ and whether every funded dollar is actually flowing (outlays, not just obligatio
     { key: "state", label: "State", render: (r) => <StateChip state={r.state} kind={r.tone} /> }
   ]}
   rows={[
-    { id: "f1", instrument: "AIP-2025-0031", airport: "GEG", kind: "aip_grant", award: "$18.2M", outlay: "0.71", state: "DrawdownActive", tone: "healthy" },
-    { id: "f2", instrument: "ATP-Round5-DCA", airport: "DCA", kind: "atp_grant", award: "$835M (T1 program)", outlay: "0.34", state: "DrawdownActive", tone: "healthy" },
-    { id: "f3", instrument: "PFC-ORD-07", airport: "ORD", kind: "pfc", award: "$4.50/pax cap", outlay: "0.62", state: "Collecting", tone: "healthy" },
-    { id: "f4", instrument: "PANYNJ-2030-B", airport: "JFK", kind: "revenue_bond", award: "—", outlay: "0.15", state: "Obligated", tone: "neutral" },
-    { id: "f5", instrument: "PPP-DWC-CONC", airport: "DWC", kind: "p3_concession", award: "part of $35B program", outlay: "0.05", state: "InstrumentSelected", tone: "neutral" }
+    { id: "f1", instrument: "AIP-2026-0031", airport: "GEG", kind: "aip_grant", award: "$18.2M", outlay: "0.71", state: "DrawdownActive", tone: "healthy" },
+    { id: "f2", instrument: "ATP-Round5-DCA", airport: "DCA", kind: "iija_atp", award: "$835M (T1 program)", outlay: "0.34", state: "DrawdownActive", tone: "healthy" },
+    { id: "f3", instrument: "PFC-ORD-07", airport: "ORD", kind: "pfc_bond", award: "$4.50/pax ($4.39 net)", outlay: "0.62", state: "Collecting", tone: "healthy" },
+    { id: "f4", instrument: "GARB-PANYNJ-2030", airport: "JFK", kind: "garb", award: "$2.4B Series", outlay: "0.15", state: "Obligated", tone: "neutral" },
+    { id: "f5", instrument: "PAB-JFKNTO-P3", airport: "JFK", kind: "dbfom_p3", award: "$9.5B NTO P3", outlay: "0.48", state: "DrawdownActive", tone: "healthy" }
   ]}
 />
 
 ## Formulas in play
 
-<Formula name="Funding gap" expr="Gap = TotalNeed − Σ FundedInstruments" where="TotalNeed from NPIAS 5-yr estimates + ACI-NA Infrastructure Needs Study" />
-<Formula name="AIP federal share" expr="s = 0.75 | 0.80 (noise) | 0.90–0.95 (small/GA); SponsorShare = Cost × (1 − s)" />
-<Formula name="PFC capacity" expr="PFC_annual = enplanements × PFC_rate" where="federal cap outdated — ACI-NA advocacy to lift it" />
-<Formula name="DSCR" expr="DSCR = netRevenues / annualDebtService" />
+<Formula name="Funding gap" expr="Gap = TotalNeed_NPIAS_CIP − Σ (AIP + IIJA_AIG_ATP + PFC + CFC + GARB + P3 + TIFIA + SponsorCash)" where="TotalNeed from FAA NPIAS 5-yr estimates + ACI-NA Infrastructure Needs Study" />
+<Formula name="AIP federal share (49 U.S.C. § 47109)" expr="s = 0.75 (Large/Med Hub) | 0.80 (Part 150 Noise) | 0.90–0.95 (Small/Reliever/GA); SponsorMatch = EligibleCost × (1 − s)" />
+<Formula name="PFC net collection & bonding capacity (14 CFR Part 158)" expr="PFC_annual = EligibleEnplanements × (PFC_rate − $0.11)" where="Federally capped at $4.50/pax less $0.11 airline handling compensation" />
+<Formula name="Senior DSCR, CPE & Liquidity (Form 5100-127 / MSRB EMMA)" expr="DSCR_Senior = (NetRevenues + RollingCoverage + PledgedPFC) / SeniorDebtService ≥ 1.25x; CPE = AirlineAeroRev / Enplanements; DCOH ≥ 365 days" />
 
 ## Lifecycle — W1 state machine (excerpt)
 
@@ -328,31 +328,31 @@ queue observations rather than periodic manual surveys.
 ## Stage budget vs observed
 
 <DataTable
-  caption="Process stages at sample airport (DEL T3 profile)"
+  caption="Process stages at U.S. Large Hub (ATL / JFK Terminal Profile)"
   columns={[
     { key: "stage", label: "Stage" },
-    { key: "budget", label: "Budget" },
+    { key: "budget", label: "95th-Pct Budget" },
     { key: "observed", label: "Observed (7-day avg)" },
     { key: "rho", label: "Utilization ρ" },
-    { key: "tech", label: "Tech" },
+    { key: "tech", label: "U.S. Tech Standard" },
     { key: "state", label: "Capability state", render: (r) => <StateChip state={r.state} kind={r.tone} /> }
   ]}
   rows={[
-    { id: "s1", stage: "Check-in kiosks", budget: "≤ 4 min", observed: "3.2 min", rho: "0.71", tech: "kiosk + AI flow", state: "Live", tone: "healthy" },
-    { id: "s2", stage: "Self bag drop", budget: "≤ 70 s", observed: "72 s", rho: "0.83", tech: "biometric SBD", state: "Optimizing", tone: "healthy" },
-    { id: "s3", stage: "Security screening", budget: "≤ 12 min", observed: "14.5 min", rho: "0.91", tech: "CT screening (partial)", state: "Scaling", tone: "warn" },
-    { id: "s4", stage: "Boarding", budget: "≤ 20 min", observed: "17 min", rho: "0.66", tech: "biometric gate", state: "Live", tone: "healthy" },
-    { id: "s5", stage: "Border e-gates (arrivals)", budget: "≤ 90 s", observed: "84 s", rho: "0.78", tech: "e-gates", state: "Live", tone: "healthy" }
+    { id: "s1", stage: "Common-use check-in kiosks", budget: "≤ 4 min", observed: "3.2 min", rho: "0.71", tech: "CUPPS kiosk + AI flow", state: "Live", tone: "healthy" },
+    { id: "s2", stage: "Biometric self-bag-drop", budget: "≤ 70 s", observed: "68.4 s", rho: "0.78", tech: "Biometric SBD (TSA PGDS)", state: "Optimizing", tone: "healthy" },
+    { id: "s3", stage: "TSA checkpoint (Standard / PreCheck)", budget: "≤ 10m / 5m", observed: "11.4m / 3.8m", rho: "0.89", tech: "TSA CT + CAT-2 Touchless ID", state: "Scaling", tone: "warn" },
+    { id: "s4", stage: "Holdroom & biometric boarding", budget: "≤ 20 min", observed: "17 min", rho: "0.66", tech: "CBP/Airline biometric e-gate", state: "Live", tone: "healthy" },
+    { id: "s5", stage: "CBP FIS (Simplified Arrival)", budget: "≤ 15 min", observed: "11.2 min", rho: "0.76", tech: "CBP Facial Comparison + MPC", state: "Live", tone: "healthy" }
   ]}
 />
 
 ## Formulas in play
 
-<Formula name="Journey time" expr="T = Σ stage times vs stage budget" />
-<Formula name="Little's Law" expr="L = λ · W" where="L avg queue length, λ arrival rate, W avg wait" />
-<Formula name="Checkpoint utilization" expr="ρ = λ / (c·μ); stable if ρ < 1; Wq ≈ Lq / λ" />
-<Formula name="Bag-drop gain" expr="Δt = t_manual − t_sbd (≈30% per OAG); μ' = 1 / t_sbd" />
-<Formula name="Satisfaction link" expr="corr(stage times, ASQ scores) via BenchmarkSystem (ACI ASQ: ~707k live pax surveys)" />
+<Formula name="End-to-end journey time" expr="T_total = Σ (W_q,i + 1/μ_i) across Curbside → Bag Drop → TSA → Boarding → CBP FIS" />
+<Formula name="Little's Law" expr="L_q = λ · W_q" where="L_q avg queue length, λ arrival rate (pax/min), W_q avg wait" />
+<Formula name="Erlang-C (M/M/c) & 95th-percentile wait" expr="ρ = λ / (c·μ); W_q = P_wait / (cμ − λ); W_q95 = ln(20 · P_wait) / (cμ − λ)" where="Solve minimum active lanes c* so W_q95 ≤ TSA/CBP stage budget" />
+<Formula name="Bag-drop gain" expr="Δt = t_manual − t_sbd (≈30% per OAG: 99s → 68.4s); μ' = 60 / t_sbd" />
+<Formula name="Satisfaction link" expr="corr(W_q95, ACI-NA / ASQ scores) via BenchmarkSystem" />
 
 ## Pilot gate — security CT screening (sample)
 
@@ -482,38 +482,38 @@ emissions on a measured glidepath to its net-zero date, and keep
 physical modernization (terminals, fleets, ground access) inside the
 carbon budget.
 
-<StatCard label="Scope 1+2 emissions vs baseline" value="−38%" delta="on glidepath" trend="down" caption="Baseline 2019; glidepath to net-zero 2040 (Denver-style commitment; industry 2050)." />
-<StatCard label="ZEV ground fleet" value="17% → 100% by 2030" caption="Heathrow reference point; electric buses also deployed at LAX and HKG." />
-<StatCard label="Energy intensity" value="5.9 kWh/pax" delta="-0.4" trend="down" caption="kWh per passenger; low-energy terminal design ecosystem." />
+<StatCard label="Scope 1+2 emissions vs baseline" value="−38%" delta="on glidepath" trend="down" caption="Baseline 2019; glidepath to Net-Zero 2040 (DEN commitment; U.S. Aviation Climate Action Plan 2050)." />
+<StatCard label="ZEV ground fleet & eGSE (FAA ZEV)" value="34% → 100% by 2030" caption="Electric airside buses & eGSE deployed across LAX, DEN, JFK, and SFO." />
+<StatCard label="Energy intensity (EPA eGRID)" value="5.9 kWh/pax" delta="-0.4" trend="down" caption="kWh per enplaned passenger; metered against EPA eGRID subregion emission factors." />
 
 ## Portfolio of initiatives (kind: sustainability)
 
 <DataTable
-  caption="Sustainability initiatives by state"
+  caption="U.S. airport sustainability initiatives by state"
   columns={[
     { key: "name", label: "Initiative" },
-    { key: "airport", label: "Airport" },
+    { key: "airport", label: "U.S. Airport" },
     { key: "type", label: "Type" },
     { key: "impact", label: "Emissions impact" },
     { key: "state", label: "State", render: (r) => <StateChip state={r.state} kind={r.tone} /> }
   ]}
   rows={[
-    { id: "g1", name: "Gate electrification (PCA + 400 Hz GPU)", airport: "DEN", type: "electrification", impact: "−41 ktCO2e/yr", state: "Implementing", tone: "healthy" },
-    { id: "g2", name: "Geothermal HVAC retrofit", airport: "SDF", type: "hvac", impact: ">80% facility emissions cut (study)", state: "Verifying", tone: "neutral" },
-    { id: "g3", name: "ZEV fleet transition", airport: "LHR", type: "fleet", impact: "17% → 100% by 2030", state: "Implementing", tone: "healthy" },
-    { id: "g4", name: "On-airport solar + microgrid", airport: "sample", type: "energy (gap-fill)", impact: "resilience + Scope 2 cut", state: "Targeted", tone: "neutral" },
-    { id: "g5", name: "SAF supply-chain partnership", airport: "multi", type: "fuel", impact: "university program ($35M FAA)", state: "Targeted", tone: "neutral" }
+    { id: "g1", name: "Gate electrification (PCA + 400 Hz GPU)", airport: "DEN", type: "FAA VALE / $327M Grant", impact: "−41 ktCO2e/yr APU cut", state: "Implementing", tone: "healthy" },
+    { id: "g2", name: "Geothermal HVAC heat-pump retrofit", airport: "SDF", type: "Thermal Plant", impact: ">80% facility emissions cut (PMC study)", state: "Verifying", tone: "neutral" },
+    { id: "g3", name: "Zero-emission airside bus & eGSE transition", airport: "LAX", type: "FAA ZEV Fleet", impact: "34% → 100% ZEV by 2030", state: "Implementing", tone: "healthy" },
+    { id: "g4", name: "11.3 MW Rooftop Solar + Battery Microgrid", airport: "JFK", type: "EaaS P3 (gap-fill)", impact: "Islandable resilience + Scope 2 cut", state: "Implementing", tone: "healthy" },
+    { id: "g5", name: "SAF supply-chain & hydrant blending", airport: "ORD", type: "FAA $35M + IRA 45Z", impact: "Scope 3 airline lifecycle reduction", state: "Targeted", tone: "neutral" }
   ]}
 />
 
 ## Formulas in play
 
-<Formula name="Emissions inventory" expr="E = Σ(fuel × EF) + electricity × gridEF  (Scope 1+2, tCO2e)" />
-<Formula name="Fleet electrification" expr="ZEV% = ZEV_count / fleetTotal" />
-<Formula name="Glidepath" expr="annualΔ = (E_t − E_target) / yearsRemaining; OnTrack if E_t ≤ glidepath(E_t)" />
-<Formula name="Energy intensity" expr="kWh / passenger" />
-<Formula name="Embodied carbon (new builds)" expr="kgCO2e / m² vs IATA Embodied Carbon Tool benchmark (terminals, runways, car parks)" />
-<Formula name="Grant leverage" expr="Leverage = totalProgramCost / federalGrant" where="e.g., $327M FAA electrification grants" />
+<Formula name="Scope 1+2 emissions (U.S. EPA eGRID)" expr="E = Σ(Fuel × EF_EPA) + max(0, GridMWh − SolarMWh − PPA_MWh) × EF_eGRID_subregion" />
+<Formula name="APU gate displacement (FAA AEDT / VALE)" expr="ΔE_Gate = N_turns × t_gate × (m_dot_APU × EF_JetA − P_GPU_PCA × EF_eGRID)" />
+<Formula name="Glidepath & CARR" expr="annualΔ = (E_t − E_target) / yearsRemaining; CARR = 1 − (E_target / E_base)^(1/Δt)" />
+<Formula name="Energy intensity" expr="kWh / enplaned passenger" />
+<Formula name="Embodied carbon (new builds)" expr="kgCO2e / m² vs IATA & Federal Buy Clean benchmarks (terminals, runways, ConRACs)" />
+<Formula name="Federal grant leverage" expr="Leverage = totalProgramCapex / FAA_VALE_ZEV_NetZeroGrant" where="e.g., $327M FAA gate electrification & VALE/ZEV grants" />
 
 ## Workflow actions supported
 
@@ -621,45 +621,44 @@ workflows: [W7-RealtimeDataCompilation]
 
 import { StatCard, DataTable, StateChip, Callout, Formula } from "../components/ui.mdx";
 
-# Realtime Data Hub
+# U.S. Realtime & Primary Data Hub
 
-Purpose: the compilation layer — one catalog of global realtime and benchmark
-sources for airports, with feed health, normalization status, and airport
-drill-down. Every other view reads through this hub.
+Purpose: the compilation layer — one unified catalog of U.S. NAS realtime feeds and
+federal/municipal batch financial & operational databases, with feed health,
+entity resolution on FAA LID / ICAO / IATA codes, and U.S. hub cohort drill-down.
 
-<StatCard label="Feeds streaming" value="13 / 14" caption="One Degraded (staleness breach); zero Quarantined." />
-<StatCard label="Aggregate completeness (24h)" value="99.2%" caption="Alert at C < 0.95 per window." />
-<StatCard label="Airports resolved (entity resolution)" value="2,817" caption="ACI World Airport Traffic Dataset coverage; codes via OurAirports reference." />
+<StatCard label="U.S. feeds streaming" value="15 / 16" caption="One Degraded (staleness breach); zero Quarantined." />
+<StatCard label="Aggregate completeness (24h)" value="99.4%" caption="Alert at C < 0.95 per window." />
+<StatCard label="U.S. NPIAS airports resolved" value="3,304" caption="FAA NPIAS & ADIP Master Record (Form 5010) coverage; Core 30 + Commercial Hubs." />
 
-## Source catalog & health
+## U.S. Source catalog & health
 
 <DataTable
-  caption="Realtime + benchmark sources (global)"
+  caption="U.S. Realtime + Primary Batch Sources"
   columns={[
-    { key: "name", label: "Source" },
+    { key: "name", label: "U.S. Source" },
     { key: "scope", label: "Coverage" },
-    { key: "data", label: "Data" },
+    { key: "data", label: "Data Provided" },
     { key: "cadence", label: "Cadence" },
     { key: "state", label: "Feed state", render: (r) => <StateChip state={r.state} kind={r.tone} /> }
   ]}
   rows={[
-    { id: "d1", name: "FAA SWIM (SFDPS, STDDS)", scope: "US NAS", data: "flight plans, traffic, surveillance", cadence: "RT", state: "Streaming", tone: "healthy" },
-    { id: "d2", name: "FAA NOTAM (SWIM/search)", scope: "US + world", data: "closures, construction", cadence: "RT", state: "Streaming", tone: "healthy" },
-    { id: "d3", name: "AviationWeather.gov Data API", scope: "Global", data: "METAR/TAF", cadence: "RT", state: "Streaming", tone: "healthy" },
-    { id: "d4", name: "OpenSky Network API", scope: "Global ADS-B", data: "live positions (research)", cadence: "RT", state: "Streaming", tone: "healthy" },
-    { id: "d5", name: "ADS-B Exchange", scope: "Global", data: "unfiltered ADS-B", cadence: "RT", state: "Streaming", tone: "healthy" },
-    { id: "d6", name: "Flightradar24 API", scope: "Global", data: "positions, airport info", cadence: "RT", state: "Degraded", tone: "warn" },
-    { id: "d7", name: "FlightAware AeroAPI", scope: "Global", data: "status, predictive ETA", cadence: "RT", state: "Streaming", tone: "healthy" },
-    { id: "d8", name: "AirLabs", scope: "Global", data: "tracker, schedules, routes", cadence: "RT/NRT", state: "Streaming", tone: "healthy" },
-    { id: "d9", name: "Aviationstack", scope: "Global", data: "flight status", cadence: "NRT", state: "Streaming", tone: "healthy" },
-    { id: "d10", name: "Aviation Edge (NOTAM)", scope: "Global", data: "flights, NOTAM, airport DB", cadence: "NRT", state: "Streaming", tone: "healthy" },
-    { id: "d11", name: "EUROCONTROL NM/DDR", scope: "Europe", data: "ATFM delays, traffic", cadence: "RT/BATCH", state: "Connected", tone: "neutral" },
-    { id: "d12", name: "Airport operator APIs", scope: "per airport", data: "arrivals/departures", cadence: "RT", state: "Streaming", tone: "healthy" },
-    { id: "d13", name: "CheckWX / AVWX", scope: "Global", data: "parsed METAR/TAF", cadence: "RT", state: "Streaming", tone: "healthy" },
-    { id: "d14", name: "BTS TranStats", scope: "US", data: "enplanements, on-time, fares", cadence: "BATCH", state: "Streaming", tone: "healthy" },
-    { id: "d15", name: "ACI World Dataset", scope: "2,817 airports", data: "pax/cargo/movements", cadence: "BATCH", state: "Streaming", tone: "healthy" },
-    { id: "d16", name: "Cirium OTP / OAG", scope: "Global", data: "on-time performance", cadence: "BATCH", state: "Streaming", tone: "healthy" },
-    { id: "d17", name: "OurAirports", scope: "Global", data: "static airport reference", cadence: "BATCH", state: "Streaming", tone: "healthy" }
+    { id: "d1", name: "FAA SWIM (SFDPS, TFMS, STDDS)", scope: "U.S. NAS", data: "flight plans, surface movement, traffic flow", cadence: "RT", state: "Streaming", tone: "healthy" },
+    { id: "d2", name: "FAA NOTAM (SWIM / Search)", scope: "U.S. NAS", data: "runway/taxiway closures, AC 150/5370-2G windows", cadence: "RT", state: "Streaming", tone: "healthy" },
+    { id: "d3", name: "AviationWeather.gov (NOAA/NWS)", scope: "U.S. NAS", data: "official METAR, TAF, PIREP", cadence: "RT", state: "Streaming", tone: "healthy" },
+    { id: "d4", name: "FlightAware AeroAPI / Firehose", scope: "U.S. NAS", data: "live flight status, predictive ETA, delays", cadence: "RT", state: "Streaming", tone: "healthy" },
+    { id: "d5", name: "OpenSky Network / ADS-B Exchange", scope: "U.S. NAS", data: "live ADS-B aircraft state vectors", cadence: "RT", state: "Streaming", tone: "healthy" },
+    { id: "d6", name: "CBP Airport Wait Times (awt.cbp.gov)", scope: "U.S. FIS Gateways", data: "international arrival passport wait times & booths", cadence: "NRT", state: "Streaming", tone: "healthy" },
+    { id: "d7", name: "U.S. Operator Live Telemetry (PANYNJ, LAWA, DEN, ATL)", scope: "U.S. Core Hubs", data: "TSA wait times, gates, ConRAC/parking occupancy", cadence: "RT/NRT", state: "Degraded", tone: "warn" },
+    { id: "d8", name: "FAA CATS (Form 5100-127 & 5100-126)", scope: "U.S. Commercial Hubs", data: "audited aero/non-aero revenue, O&M, CPE, DCOH, PFC", cadence: "BATCH", state: "Streaming", tone: "healthy" },
+    { id: "d9", name: "MSRB EMMA Municipal Disclosures", scope: "U.S. Bond Issuers", data: "Official Statements, Feasibility Reports, DSCR covenants", cadence: "BATCH", state: "Streaming", tone: "healthy" },
+    { id: "d10", name: "FAA NPIAS & AIP/ATP Grant Ledger", scope: "3,304 U.S. Airports", data: "5-yr capital needs, hub roles, grant obligations/outlays", cadence: "BATCH", state: "Streaming", tone: "healthy" },
+    { id: "d11", name: "FAA ASPM & OPSNET", scope: "U.S. Core 30 / ASPM 77", data: "cause-specific delay minutes, AAR/ADR, unimpeded taxi", cadence: "BATCH", state: "Streaming", tone: "healthy" },
+    { id: "d12", name: "FAA Terminal Area Forecast (TAF)", scope: "U.S. NPIAS", data: "official 20-year enplanement & operations forecast", cadence: "BATCH", state: "Streaming", tone: "healthy" },
+    { id: "d13", name: "FAA ADIP / Form 5010 Master Record", scope: "U.S. NPIAS", data: "runway/taxiway geometry, PCI, eALP", cadence: "BATCH", state: "Streaming", tone: "healthy" },
+    { id: "d14", name: "BTS TranStats (T-100, DB1B)", scope: "U.S. Commercial", data: "enplanements, carrier HHI concentration, O&D %, fares", cadence: "BATCH", state: "Streaming", tone: "healthy" },
+    { id: "d15", name: "U.S. EPA eGRID & FAA AEDT", scope: "U.S. Power Grids", data: "sub-regional electricity CO2e factors & APU emissions", cadence: "BATCH", state: "Streaming", tone: "healthy" },
+    { id: "d16", name: "ACI-NA Benchmarking & Cirium OTP", scope: "U.S. Hub Cohorts", data: "needs study ($173.9B), ASQ satisfaction, OTP percentiles", cadence: "BATCH", state: "Streaming", tone: "healthy" }
   ]}
 />
 

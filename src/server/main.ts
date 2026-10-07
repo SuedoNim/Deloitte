@@ -12,6 +12,7 @@ import { createJobsRoutes } from './routes/jobs-routes.ts'
 import { createConnectionRoutes } from './routes/connection-routes.ts'
 import { createChatRoutes } from './routes/chat-routes.ts'
 import { createLogsRoutes } from './routes/logs-routes.ts'
+import { createSkillsRoutes } from './routes/skills-routes.ts'
 
 // Composition Root (SOLID Dependency Injection with PGlite + pg-boss)
 const logsDir = path.resolve(process.cwd(), 'logs')
@@ -35,8 +36,6 @@ const chatService = new VercelAiChatService(
   serverLogger,
 )
 
-await jobRepository.init()
-
 const app = new Hono()
 
 app.use('*', cors())
@@ -59,6 +58,7 @@ app.route('/api/jobs', createJobsRoutes(jobRepository, serverLogger))
 app.route('/api/connection', createConnectionRoutes(connectionStore))
 app.route('/api/chat', createChatRoutes(chatService))
 app.route('/api/logs', createLogsRoutes(clientFileLogger, serverLogger))
+app.route('/api/skills', createSkillsRoutes())
 
 app.get('/api/health', (c) => {
   const conn = connectionStore.getPublicStatus()
@@ -76,15 +76,6 @@ app.get('/api/health', (c) => {
 app.use('/*', serveStatic({ root: './src/client/dist' }))
 app.get('*', serveStatic({ path: './src/client/dist/index.html' }))
 
-// Background server-authoritative job telemetry tick persisted in PGlite
-setInterval(() => {
-  jobRepository.tickProgress().catch((err) => {
-    serverLogger.error('job_manager.tick_failed', {
-      error: err instanceof Error ? err.message : String(err),
-    })
-  })
-}, 4000)
-
 const port = Number(process.env.PORT) || 3000
 serve({
   fetch: app.fetch,
@@ -98,5 +89,23 @@ serverLogger.info('server.started', {
   jobManager: 'pglite+pg-boss',
   logsDir,
 })
+
+// Initialize PGlite + pg-boss in background after port 3000 is open
+jobRepository
+  .init()
+  .then(() => {
+    setInterval(() => {
+      jobRepository.tickProgress().catch((err) => {
+        serverLogger.error('job_manager.tick_failed', {
+          error: err instanceof Error ? err.message : String(err),
+        })
+      })
+    }, 4000)
+  })
+  .catch((err) => {
+    serverLogger.error('job_manager.init_failed', {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  })
 
 export default app

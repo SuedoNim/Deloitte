@@ -88,7 +88,7 @@ export function DispatchJobModal(props: DispatchJobModalProps) {
             <option value="DEN">DEN · Denver International (KDEN)</option>
             <option value="LAX">LAX · Los Angeles International (KLAX)</option>
             <option value="ORD">ORD · Chicago O’Hare International (KORD)</option>
-            <option value="DEL">DEL · Indira Gandhi International T3 (VIDP)</option>
+            <option value="ATL">ATL · Hartsfield-Jackson Atlanta International (KATL)</option>
           </select>
         </div>
 

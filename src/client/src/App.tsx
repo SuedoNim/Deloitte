@@ -7,6 +7,7 @@ import { TopBar } from './components/TopBar'
 import { ConnectionBar } from './components/ConnectionBar'
 import { JobsPanel } from './components/JobsPanel'
 import { DispatchJobModal } from './components/DispatchJobModal'
+import { SkillsCatalogModal } from './components/SkillsCatalogModal'
 import {
   INITIAL_ECS_JOBS,
   type EcsJob,
@@ -32,7 +33,7 @@ const SEEDED_MESSAGES: UIMessage[] = [
           '',
           'This main chat is scoped exclusively to **Job Management Tools** (`createJob`, `updateJob`, `abortJob`, `removeJob`, `listJobs`) to create, update, abort, or remove single-purpose LLM jobs.',
           '',
-          '- **In Progress (Yellow)**: `JOB-4091` (DEN · W4), `JOB-4094` (DEL · W3), `JOB-4096` (LAX · W7), `JOB-4085` (ORD · W1)',
+          '- **In Progress (Yellow)**: `JOB-4091` (DEN · W4), `JOB-4094` (ATL · W3), `JOB-4096` (LAX · W7), `JOB-4085` (ORD · W1)',
           '- **Complete (Green)**: `JOB-4079` (DEN · W5 Gate Electrification)',
           '- **Failure (Red)**: `JOB-4088` (JFK · W2 ORAT Gate Hold)',
           '',
@@ -92,6 +93,7 @@ export default function App() {
   const [recentSubChatUpdates, setRecentSubChatUpdates] = createSignal<JobSubChatUpdate[]>([])
   const [mobileView, setMobileView] = createSignal<'split' | 'jobs' | 'chat'>('split')
   const [isDispatchModalOpen, setIsDispatchModalOpen] = createSignal(false)
+  const [isSkillsModalOpen, setIsSkillsModalOpen] = createSignal(false)
 
   // Model Connection Settings State
   const [showConnectionBar, setShowConnectionBar] = createSignal(true)
@@ -415,6 +417,7 @@ export default function App() {
         showConnectionBar={showConnectionBar()}
         onSelectView={(v) => setMobileView(v)}
         onToggleConnectionBar={() => setShowConnectionBar((v) => !v)}
+        onOpenSkillsModal={() => setIsSkillsModalOpen(true)}
         onOpenDispatchModal={() => setIsDispatchModalOpen(true)}
       />
 
@@ -645,6 +648,16 @@ export default function App() {
         <DispatchJobModal
           onClose={() => setIsDispatchModalOpen(false)}
           onSubmit={handleCreateJob}
+        />
+      </Show>
+
+      <Show when={isSkillsModalOpen()}>
+        <SkillsCatalogModal
+          onClose={() => setIsSkillsModalOpen(false)}
+          onDispatchSkillJob={async (payload) => {
+            setIsSkillsModalOpen(false)
+            await handleCreateJob(payload)
+          }}
         />
       </Show>
     </div>
