@@ -3,7 +3,7 @@
 
 set dotenv-load := true
 
-port := env_var_or_default("PORT", "3000")
+port := env_var_or_default("PORT", "3002")
 api_port := env_var_or_default("API_PORT", "3001")
 
 # List all available commands
@@ -32,7 +32,7 @@ check: typecheck knip
 # Build both frontend and backend for production
 build: build-frontend
 
-# Debug both frontend and backend together on a single port (0.0.0.0:3000) with watch mode
+# Debug both frontend and backend together on a single port (0.0.0.0:3002) with watch mode
 debug:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -42,7 +42,7 @@ debug:
     trap "kill $CLIENT_PID 2>/dev/null || true" EXIT
     PORT={{port}} npx tsx watch src/server/main.ts
 
-# Debug frontend (Vite HMR on :3000) and backend (Hono watch on :3001) concurrently via Vite /api proxy
+# Debug frontend (Vite HMR on :3002) and backend (Hono watch on :3001) concurrently via Vite /api proxy
 debug-split:
     #!/usr/bin/env bash
     set -euo pipefail

@@ -88,7 +88,7 @@ app.get('/api/health', (c) => {
 app.use('/*', serveStatic({ root: './src/client/dist' }))
 app.get('*', serveStatic({ path: './src/client/dist/index.html' }))
 
-const port = Number(process.env.PORT) || 3000
+const port = Number(process.env.PORT) || 3002
 serve({
   fetch: app.fetch,
   port,
@@ -102,7 +102,7 @@ serverLogger.info('server.started', {
   logsDir,
 })
 
-// Initialize PGlite + pg-boss in background after port 3000 is open
+// Initialize PGlite + pg-boss in background after port 3002 is open
 jobRepository
   .init()
   .then(() => {
