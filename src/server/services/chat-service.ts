@@ -18,6 +18,11 @@ import type {
 import type { ILogger } from '../logging/logger.ts'
 import type { IJobRepository } from './job-repository.ts'
 import type { IConnectionStore } from './connection-store.ts'
+import {
+  isGeminiConnection,
+  resolveGeminiModelName,
+  runGeminiJobManagementChat,
+} from '../ai/gemini-client.ts'
 
 export interface ChatRequestInput {
   messages: UIMessage[]
@@ -225,50 +230,90 @@ export class VercelAiChatService implements IChatService {
 
     this.logger.info('chat.request_received', {
       messageCount: input.messages.length,
+      provider: resolvedConn.provider,
       modelId: resolvedConn.modelId,
       baseUrl: resolvedConn.baseUrl,
       hasApiToken: Boolean(resolvedConn.apiToken),
       promptPreview: userText.slice(0, 120),
     })
 
+    const jobsContext = jobs.length
+      ? jobs
+          .map(
+            (j) =>
+              `${j.id} (pgBoss=${j.pgBossJobId ?? 'none'}) [${j.code} ${j.airportIata}]: title="${j.title}" | purpose="${j.purpose}" | status=${j.status} | progress=${j.progress}%`,
+          )
+          .join('\n')
+      : 'No active jobs in queue yet.'
+
+    const systemInstruction = [
+      'You are the Job Management Orchestrator for the Deloitte Airport Modernization ECS platform.',
+      'Your ONLY purpose in this main chat is to determine what jobs the user wants to create, update, abort, remove, or inspect, and execute those operations using your job management tools (`createJob`, `updateJob`, `abortJob`, `removeJob`, `listJobs`).',
+      'Every job is a single-purpose LLM chat orchestrated by PGlite and pg-boss.',
+      'When creating or updating a job, always define a clear, single specific `purpose` for that job.',
+      '',
+      'Current Jobs in PGlite / pg-boss:',
+      jobsContext,
+    ].join('\n')
+
     if (resolvedConn.apiToken) {
-      const jobsContext = jobs
-        .map(
-          (j) =>
-            `${j.id} (pgBoss=${j.pgBossJobId ?? 'none'}) [${j.code} ${j.airportIata}]: title="${j.title}" | purpose="${j.purpose}" | status=${j.status} | progress=${j.progress}%`,
-        )
-        .join('\n')
+      if (isGeminiConnection(resolvedConn)) {
+        try {
+          const geminiReply = await runGeminiJobManagementChat({
+            apiKey: resolvedConn.apiToken,
+            modelId: resolvedConn.modelId,
+            userPrompt: userText,
+            systemInstruction,
+            jobRepository: this.jobRepository,
+            logger: this.logger,
+          })
+          if (geminiReply) {
+            return this.createChunkedTextResponse(
+              geminiReply,
+              resolveGeminiModelName(resolvedConn.modelId),
+            )
+          }
+        } catch (err) {
+          this.logger.warn('chat.gemini_fallback_to_deterministic', {
+            modelId: resolvedConn.modelId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      } else {
+        try {
+          const provider = createOpenAI({
+            apiKey: resolvedConn.apiToken,
+            ...(resolvedConn.baseUrl ? { baseURL: resolvedConn.baseUrl } : {}),
+          })
 
-      const provider = createOpenAI({
-        apiKey: resolvedConn.apiToken,
-        ...(resolvedConn.baseUrl ? { baseURL: resolvedConn.baseUrl } : {}),
-      })
+          const result = streamText({
+            model: provider(resolvedConn.modelId),
+            messages: await convertToModelMessages(input.messages),
+            tools: this.buildJobManagementTools(),
+            stopWhen: stepCountIs(5),
+            system: systemInstruction,
+          })
 
-      const result = streamText({
-        model: provider(resolvedConn.modelId),
-        messages: await convertToModelMessages(input.messages),
-        tools: this.buildJobManagementTools(),
-        stopWhen: stepCountIs(5),
-        system: [
-          'You are the Job Management Orchestrator for the Deloitte Airport Modernization ECS platform.',
-          'Your ONLY purpose in this main chat is to determine what jobs the user wants to create, update, abort, remove, or inspect, and execute those operations using your job management tools (`createJob`, `updateJob`, `abortJob`, `removeJob`, `listJobs`).',
-          'Every job is a single-purpose LLM chat orchestrated by PGlite and pg-boss.',
-          'When creating or updating a job, always define a clear, single specific `purpose` for that job.',
-          '',
-          'Current Jobs in PGlite / pg-boss:',
-          jobsContext,
-        ].join('\n'),
-      })
-
-      return createUIMessageStreamResponse({
-        stream: toUIMessageStream({ stream: result.stream }),
-      })
+          return createUIMessageStreamResponse({
+            stream: toUIMessageStream({ stream: result.stream }),
+          })
+        } catch (err) {
+          this.logger.warn('chat.openai_fallback_to_deterministic', {
+            modelId: resolvedConn.modelId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
     }
 
     const replyText = await this.executeDeterministicJobManagement(
       userText,
       resolvedConn,
     )
+    return this.createChunkedTextResponse(replyText, resolvedConn.modelId)
+  }
+
+  private createChunkedTextResponse(replyText: string, modelId: string): Response {
     const chunks = replyText.match(/.{1,18}(\s|$)|\S+/g) ?? [replyText]
 
     const stream = createUIMessageStream({
@@ -285,7 +330,7 @@ export class VercelAiChatService implements IChatService {
 
     this.logger.info('chat.response_streamed', {
       mode: 'job_manager_orchestrator',
-      modelId: resolvedConn.modelId,
+      modelId,
       responseLength: replyText.length,
     })
 
@@ -307,106 +352,35 @@ export class VercelAiChatService implements IChatService {
 
     const explicitJobIdMatch = stripped.match(/\b(JOB-\d{3,5})\b/i)
     const contextJobIdMatch = rawPrompt.match(/\[Context:\s*(JOB-\d{3,5})/i)
+    const allJobs = this.jobRepository.getAll()
     const targetJobId =
       explicitJobIdMatch?.[1]?.toUpperCase() ??
-      contextJobIdMatch?.[1]?.toUpperCase()
+      contextJobIdMatch?.[1]?.toUpperCase() ??
+      allJobs[0]?.id
 
     const workflowMatch = stripped.match(/\b(W[1-7])\b/i)
     const detectedWorkflow = (workflowMatch?.[1]?.toUpperCase() as WorkflowCode) || undefined
 
-    const airportMatch = stripped.match(/\b(JFK|DEN|LAX|ORD|ATL|DFW|DCA|SDF|GEG|EWR|LGA|SFO|MIA|SEA)\b/i)
+    const airportMatch = stripped.match(/\b(JFK|DEN|LAX|ORD|ATL|DFW|DCA|SDF|GEG)\b/i)
     const detectedAirport = airportMatch?.[1]?.toUpperCase()
 
-    // 1. REMOVE / DELETE JOB INTENT
-    if (
-      /\b(remove|delete|drop|purge)\b/i.test(lower) &&
-      targetJobId
-    ) {
-      const existing = this.jobRepository.getById(targetJobId)
-      const removed = await this.jobRepository.remove(targetJobId)
-      if (!removed || !existing) {
-        return `### Job Manager (\`removeJob\`)\n\n- Could not find \`${targetJobId}\` in PGlite / \`pg-boss\`.`
-      }
-      return [
-        `### Job Removed via \`removeJob\` (\`PGlite\` + \`pg-boss\`)`,
-        ``,
-        `- **Removed Job**: \`${existing.id}\` (*${existing.title}*)`,
-        `- **pg-boss Queue ID**: \`${existing.pgBossJobId ?? 'cancelled'}\``,
-        `- **Single Purpose**: ${existing.purpose}`,
-        `- **Status**: Cancelled in \`pg-boss\` and deleted from \`PGlite\` (\`ecs_jobs\`).`,
-      ].join('\n')
-    }
-
-    // 2. ABORT / CANCEL / STOP JOB INTENT
-    if (
-      /\b(abort|cancel|stop|halt|kill)\b/i.test(lower) &&
-      targetJobId
-    ) {
-      const aborted = await this.jobRepository.abort(
-        targetJobId,
-        `Aborted via Job Management Chat: "${stripped.slice(0, 80)}"`,
+    const startsWithCreateVerb =
+      /^(please\s+)?(create|start|dispatch|launch|add|new\s+job|queue|spawn|run)\b/i.test(
+        stripped,
       )
-      if (!aborted) {
-        return `### Job Manager (\`abortJob\`)\n\n- Job \`${targetJobId}\` was not found in PGlite.`
-      }
-      return [
-        `### Job Aborted via \`abortJob\` (\`PGlite\` + \`pg-boss\`)`,
-        ``,
-        `- **Job**: \`${aborted.id}\` · \`${aborted.code}\` · **${aborted.airportIata}** (*${aborted.title}*)`,
-        `- **pg-boss Queue ID**: \`${aborted.pgBossJobId ?? 'n/a'}\` (cancelled)`,
-        `- **New Status**: **FAILURE / ABORTED** (Red · ${aborted.progress}%)`,
-        `- **Single Purpose**: ${aborted.purpose}`,
-      ].join('\n')
-    }
 
-    // 3. UPDATE / MODIFY / CHANGE / RESUME JOB INTENT
+    // 1. CREATE / START / DISPATCH / ADD NEW JOB INTENT (checked first when user explicitly starts a new job)
     if (
-      /\b(update|change|modify|repurpose|set purpose|rename|restart|resume)\b/i.test(lower) &&
-      targetJobId
-    ) {
-      const current = this.jobRepository.getById(targetJobId)
-      if (!current) {
-        return `### Job Manager (\`updateJob\`)\n\n- Job \`${targetJobId}\` was not found in PGlite.`
-      }
-
-      const cleanedPurpose = stripped
-        .replace(/^(please\s+)?(update|change|modify|repurpose|rename|restart|resume)\s+(job\s+)?(JOB-\d+\s*)?(to|with|purpose\s+to)?\s*/i, '')
-        .trim()
-
-      const nextPurpose =
-        cleanedPurpose.length > 6 ? cleanedPurpose : `${current.purpose} (Updated via chat)`
-      const nextStatus: EcsJob['status'] = /\b(restart|resume)\b/i.test(lower)
-        ? 'in_progress'
-        : current.status
-
-      const updated = await this.jobRepository.update(targetJobId, {
-        purpose: nextPurpose,
-        ...(detectedWorkflow ? { code: detectedWorkflow } : {}),
-        status: nextStatus,
-      })
-
-      return [
-        `### Job Updated via \`updateJob\` (\`PGlite\` + \`pg-boss\`)`,
-        ``,
-        `- **Job**: \`${updated!.id}\` · \`${updated!.code}\` · **${updated!.airportIata}** (*${updated!.title}*)`,
-        `- **Re-Orchestrated pg-boss ID**: \`${updated!.pgBossJobId ?? 'n/a'}\``,
-        `- **Status**: \`${updated!.status}\` (${updated!.progress}%)`,
-        `- **Updated Single Purpose**: ${updated!.purpose}`,
-        ``,
-        `The running job worker was notified and re-queued in \`pg-boss\` with the updated single-purpose LLM chat objective.`,
-      ].join('\n')
-    }
-
-    // 4. CREATE / START / DISPATCH / ADD NEW JOB INTENT
-    if (
-      /\b(create|start|dispatch|launch|add|new job|queue|spawn|run a job)\b/i.test(lower)
+      !explicitJobIdMatch &&
+      (startsWithCreateVerb ||
+        /\b(create|start|dispatch|launch|add|new job|queue|spawn|run a job)\b/i.test(lower))
     ) {
       const code: WorkflowCode = detectedWorkflow || 'W4'
       const airportIata = detectedAirport || 'JFK'
       const purposeText =
         stripped
           .replace(
-            /^(please\s+)?(create|start|dispatch|launch|add|queue|spawn|run)\s+(a\s+)?(new\s+)?(job\s+)?(to|for)?\s*/i,
+            /^(please\s+)?(create|start|dispatch|launch|add|queue|spawn|run)\s+(a\s+)?(new\s+)?(w[1-7]\s+)?(job\s+)?(to|for)?\s*/i,
             '',
           )
           .trim() || `Execute ${code} single-purpose LLM analysis for ${airportIata}`
@@ -430,6 +404,83 @@ export class VercelAiChatService implements IChatService {
         `- **Status**: **IN PROGRESS** (Yellow · ${created.progress}%)`,
         ``,
         `The job is now persisted in \`PGlite\` and actively orchestrated by \`pg-boss\` in the right-hand panel.`,
+      ].join('\n')
+    }
+
+    // 2. REMOVE / DELETE JOB INTENT
+    if (
+      /\b(remove|delete|drop|purge)\b/i.test(lower) &&
+      targetJobId
+    ) {
+      const existing = this.jobRepository.getById(targetJobId)
+      const removed = await this.jobRepository.remove(targetJobId)
+      if (!removed || !existing) {
+        return `### Job Manager (\`removeJob\`)\n\n- Could not find \`${targetJobId}\` in PGlite / \`pg-boss\`.`
+      }
+      return [
+        `### Job Removed via \`removeJob\` (\`PGlite\` + \`pg-boss\`)`,
+        ``,
+        `- **Removed Job**: \`${existing.id}\` (*${existing.title}*)`,
+        `- **pg-boss Queue ID**: \`${existing.pgBossJobId ?? 'cancelled'}\``,
+        `- **Single Purpose**: ${existing.purpose}`,
+        `- **Status**: Cancelled in \`pg-boss\` and deleted from \`PGlite\` (\`ecs_jobs\`).`,
+      ].join('\n')
+    }
+
+    // 3. ABORT / CANCEL / STOP JOB INTENT
+    if (
+      /\b(abort|cancel|stop|halt|kill)\b/i.test(lower) &&
+      targetJobId
+    ) {
+      const aborted = await this.jobRepository.abort(
+        targetJobId,
+        `Aborted via Job Management Chat: "${stripped.slice(0, 80)}"`,
+      )
+      if (!aborted) {
+        return `### Job Manager (\`abortJob\`)\n\n- Job \`${targetJobId}\` was not found in PGlite.`
+      }
+      return [
+        `### Job Aborted via \`abortJob\` (\`PGlite\` + \`pg-boss\`)`,
+        ``,
+        `- **Job**: \`${aborted.id}\` · \`${aborted.code}\` · **${aborted.airportIata}** (*${aborted.title}*)`,
+        `- **pg-boss Queue ID**: \`${aborted.pgBossJobId ?? 'n/a'}\` (cancelled)`,
+        `- **New Status**: **FAILURE / ABORTED** (Red · ${aborted.progress}%)`,
+        `- **Single Purpose**: ${aborted.purpose}`,
+      ].join('\n')
+    }
+
+    // 4. UPDATE / MODIFY / CHANGE / RESUME JOB INTENT
+    if (
+      /\b(update|change|modify|repurpose|set purpose|rename|restart|resume)\b/i.test(lower) &&
+      targetJobId
+    ) {
+      const current = this.jobRepository.getById(targetJobId)
+      if (!current) {
+        return `### Job Manager (\`updateJob\`)\n\n- Job \`${targetJobId}\` was not found in PGlite.`
+      }
+
+      const cleanedPurpose = stripped
+        .replace(/^(please\s+)?(update|change|modify|repurpose|rename|restart|resume)\s+(job\s+)?(JOB-\d+\s*)?(to|with|purpose\s+to)?\s*/i, '')
+        .trim()
+
+      const nextPurpose =
+        cleanedPurpose.length > 6 ? cleanedPurpose : `${current.purpose} (Updated via chat)`
+
+      const updated = await this.jobRepository.update(targetJobId, {
+        purpose: nextPurpose,
+        ...(detectedWorkflow ? { code: detectedWorkflow } : {}),
+        status: 'in_progress',
+      })
+
+      return [
+        `### Job Updated via \`updateJob\` (\`PGlite\` + \`pg-boss\`)`,
+        ``,
+        `- **Job**: \`${updated!.id}\` · \`${updated!.code}\` · **${updated!.airportIata}** (*${updated!.title}*)`,
+        `- **Re-Orchestrated pg-boss ID**: \`${updated!.pgBossJobId ?? 'n/a'}\``,
+        `- **Status**: \`${updated!.status}\` (${updated!.progress}%)`,
+        `- **Updated Single Purpose**: ${updated!.purpose}`,
+        ``,
+        `The running job worker was notified and re-queued in \`pg-boss\` with the updated single-purpose LLM chat objective.`,
       ].join('\n')
     }
 

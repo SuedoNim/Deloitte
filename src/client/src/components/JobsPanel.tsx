@@ -58,8 +58,11 @@ interface JobsPanelProps {
   onSearchChange: (q: string) => void
   onFilterChange: (filter: 'all' | JobStatus) => void
   onToggleExpand: (jobId: string) => void
+  onViewConversation: (job: EcsJob, e: MouseEvent) => void
+  onDownloadPdfReport: (job: EcsJob, e: MouseEvent, reportCode?: string) => void
   onAskAboutJob: (job: EcsJob, e: MouseEvent) => void
   onAbortJob: (job: EcsJob, e: MouseEvent) => void
+  onRemoveJob: (job: EcsJob, e: MouseEvent) => void
 }
 
 function JobProgressIcon(props: { progress: number; status: JobStatus }) {
@@ -125,7 +128,7 @@ export function JobsPanel(props: JobsPanelProps) {
         <input
           type="search"
           class="search-input"
-          placeholder="Search jobs (JFK, DEN, W4, JOB-4091)…"
+          placeholder="Search jobs by airport, workflow, or ID (JFK, DEN, W1–W7)…"
           aria-label="Search ongoing jobs"
           value={props.searchQuery}
           onInput={(e) => props.onSearchChange(e.currentTarget.value)}
@@ -176,17 +179,23 @@ export function JobsPanel(props: JobsPanelProps) {
           when={props.jobs.length > 0}
           fallback={
             <div class="empty-state">
-              <p>No ongoing jobs match your current filter.</p>
-              <button
-                type="button"
-                class="btn-secondary"
-                onClick={() => {
-                  props.onFilterChange('all')
-                  props.onSearchChange('')
-                }}
-              >
-                Reset Filters
-              </button>
+              <p>
+                {props.counts.total === 0
+                  ? 'No jobs in the queue yet. Send a message in the Job Management Orchestrator chat to dispatch a job.'
+                  : 'No jobs match your current filter.'}
+              </p>
+              <Show when={props.counts.total > 0}>
+                <button
+                  type="button"
+                  class="btn-secondary"
+                  onClick={() => {
+                    props.onFilterChange('all')
+                    props.onSearchChange('')
+                  }}
+                >
+                  Reset Filters
+                </button>
+              </Show>
             </div>
           }
         >
@@ -231,6 +240,59 @@ export function JobsPanel(props: JobsPanelProps) {
                     </button>
 
                     <div class="job-item-actions">
+                      <button
+                        type="button"
+                        class="icon-action-btn btn-conversation"
+                        title={`View full LLM sub-conversation of ${job.id}`}
+                        aria-label={`View conversation of ${job.id}`}
+                        onClick={(e) => props.onViewConversation(job, e)}
+                      >
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.75"
+                          aria-hidden="true"
+                        >
+                          <path
+                            d="M2 3.25h12v7.5H6.5L3 13.5v-2.75H2v-7.5z"
+                            stroke-linejoin="round"
+                          />
+                          <path
+                            d="M5 6.25h6M5 8.5h4"
+                            stroke-linecap="round"
+                          />
+                        </svg>
+                        <span>Conversation</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        class="icon-action-btn btn-pdf"
+                        title={`Download PDF assessment report (${WORKFLOW_SKILL_INFO[job.code].reports}) for ${job.id}`}
+                        aria-label={`Download PDF report for ${job.id}`}
+                        onClick={(e) => props.onDownloadPdfReport(job, e)}
+                      >
+                        <svg
+                          width="13"
+                          height="13"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.75"
+                          aria-hidden="true"
+                        >
+                          <path
+                            d="M8 2.5v7.5m0 0L5.25 7.25M8 10l2.75-2.75M3 12.75h10"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          />
+                        </svg>
+                        <span>PDF</span>
+                      </button>
+
                       <button
                         type="button"
                         class="icon-action-btn btn-ask"
@@ -284,6 +346,16 @@ export function JobsPanel(props: JobsPanelProps) {
                         </svg>
                         <span>Abort</span>
                       </button>
+
+                      <button
+                        type="button"
+                        class="icon-action-btn btn-abort"
+                        title={`Remove ${job.id} from PGlite & pg-boss`}
+                        aria-label={`Remove ${job.id}`}
+                        onClick={(e) => props.onRemoveJob(job, e)}
+                      >
+                        <span>Remove</span>
+                      </button>
                     </div>
                   </div>
 
@@ -322,6 +394,28 @@ export function JobsPanel(props: JobsPanelProps) {
                           Tools: {WORKFLOW_SKILL_INFO[job.code].tools}
                         </span>
                       </div>
+
+                      <Show when={(job.reports?.length ?? 0) > 0}>
+                        <div class="job-inline-reports">
+                          <span class="job-section-label">Download PDF Reports:</span>
+                          <div class="job-reports-list">
+                            <For each={job.reports}>
+                              {(rep) => (
+                                <button
+                                  type="button"
+                                  class="report-download-chip tabular-nums"
+                                  title={rep.title}
+                                  onClick={(e) =>
+                                    props.onDownloadPdfReport(job, e, rep.reportCode)
+                                  }
+                                >
+                                  <span>{rep.reportCode} PDF</span>
+                                </button>
+                              )}
+                            </For>
+                          </div>
+                        </div>
+                      </Show>
 
                       <div class="job-subchat-container" aria-label={`${job.id} sub-conversation`}>
                         <div class="job-section-label">Job LLM Sub-Conversation</div>

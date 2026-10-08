@@ -4,6 +4,8 @@ import { cors } from 'hono/cors'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { FileLogger } from './logging/logger.ts'
+import { FileServiceConfigStore } from './services/config-service.ts'
+import { UsAirportPdfReportService } from './services/pdf-report-service.ts'
 import { UsAirportToolRegistry } from './ai/tools-registry.ts'
 import { UsAirportSkillRegistry } from './ai/skills-catalog.ts'
 import { PglitePgBossJobManager } from './services/job-repository.ts'
@@ -29,9 +31,11 @@ const clientFileLogger = new FileLogger({
   source: 'client',
 })
 
-const toolRegistry = new UsAirportToolRegistry(serverLogger)
+const configStore = new FileServiceConfigStore(serverLogger)
+const pdfReportService = new UsAirportPdfReportService(serverLogger)
+const toolRegistry = new UsAirportToolRegistry(serverLogger, pdfReportService)
 const skillRegistry = new UsAirportSkillRegistry(toolRegistry, serverLogger)
-const connectionStore = new InMemoryConnectionStore(serverLogger)
+const connectionStore = new InMemoryConnectionStore(serverLogger, configStore)
 const jobAgentRunner = new SinglePurposeLlmJobRunner(
   connectionStore,
   skillRegistry,
@@ -41,6 +45,7 @@ const jobRepository = new PglitePgBossJobManager(
   serverLogger,
   jobAgentRunner,
   skillRegistry,
+  pdfReportService,
 )
 const chatService = new VercelAiChatService(
   jobRepository,
@@ -66,7 +71,10 @@ app.use('/api/*', async (c, next) => {
   }
 })
 
-app.route('/api/jobs', createJobsRoutes(jobRepository, serverLogger))
+app.route(
+  '/api/jobs',
+  createJobsRoutes(jobRepository, pdfReportService, serverLogger),
+)
 app.route('/api/connection', createConnectionRoutes(connectionStore, serverLogger))
 app.route('/api/chat', createChatRoutes(chatService, serverLogger))
 app.route('/api/logs', createLogsRoutes(clientFileLogger, serverLogger))
@@ -79,6 +87,9 @@ app.get('/api/health', (c) => {
     service: 'deloitte-airport-modernization-ecs',
     jobManager: 'pglite+pg-boss',
     jobsCount: jobRepository.getAll().length,
+    port: conn.port,
+    configFile: conn.configFile,
+    provider: conn.provider,
     modelId: conn.modelId,
     baseUrl: conn.baseUrl,
     hasApiToken: conn.hasToken,
@@ -88,36 +99,27 @@ app.get('/api/health', (c) => {
 app.use('/*', serveStatic({ root: './src/client/dist' }))
 app.get('*', serveStatic({ path: './src/client/dist/index.html' }))
 
-const port = Number(process.env.PORT) || 3002
+const port = configStore.getServerPort()
+const hostname = configStore.getConfig().server.host || '0.0.0.0'
 serve({
   fetch: app.fetch,
   port,
-  hostname: '0.0.0.0',
+  hostname,
 })
 
 serverLogger.info('server.started', {
   port,
-  hostname: '0.0.0.0',
+  hostname,
+  configFile: configStore.getConfigFilePath(),
   jobManager: 'pglite+pg-boss',
   logsDir,
 })
 
-// Initialize PGlite + pg-boss in background after port 3002 is open
-jobRepository
-  .init()
-  .then(() => {
-    setInterval(() => {
-      jobRepository.tickProgress().catch((err) => {
-        serverLogger.error('job_manager.tick_failed', {
-          error: err instanceof Error ? err.message : String(err),
-        })
-      })
-    }, 4000)
+// Initialize PGlite + pg-boss in background after server port is open
+jobRepository.init().catch((err) => {
+  serverLogger.error('job_manager.init_failed', {
+    error: err instanceof Error ? err.message : String(err),
   })
-  .catch((err) => {
-    serverLogger.error('job_manager.init_failed', {
-      error: err instanceof Error ? err.message : String(err),
-    })
-  })
+})
 
 export default app

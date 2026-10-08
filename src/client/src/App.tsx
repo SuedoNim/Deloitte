@@ -6,15 +6,15 @@ import { createEcsApiClient, type IEcsApiClient } from './services/api-client'
 import { TopBar } from './components/TopBar'
 import { ConnectionBar } from './components/ConnectionBar'
 import { JobsPanel } from './components/JobsPanel'
-import { DispatchJobModal } from './components/DispatchJobModal'
 import { SkillsCatalogModal } from './components/SkillsCatalogModal'
+import { JobConversationModal } from './components/JobConversationModal'
 import {
-  INITIAL_ECS_JOBS,
+  type AiProviderType,
   type EcsJob,
   type JobStatus,
   type JobSubChatUpdate,
   type ModelConnectionConfig,
-  type WorkflowCode,
+  type SkillCatalogEntry,
 } from './types/jobs'
 import './App.css'
 
@@ -33,22 +33,21 @@ const SEEDED_MESSAGES: UIMessage[] = [
           '',
           'This main chat is scoped exclusively to **Job Management Tools** (`createJob`, `updateJob`, `abortJob`, `removeJob`, `listJobs`) to create, update, abort, or remove single-purpose LLM jobs.',
           '',
-          '- **In Progress (Yellow)**: `JOB-4091` (DEN · W4), `JOB-4094` (ATL · W3), `JOB-4096` (LAX · W7), `JOB-4085` (ORD · W1)',
-          '- **Complete (Green)**: `JOB-4079` (DEN · W5 Gate Electrification)',
-          '- **Failure (Red)**: `JOB-4088` (JFK · W2 ORAT Gate Hold)',
+          '- **Workflows (W1–W7)**: W1 Funding & Capital Stack · W2 Capital Delivery & ORAT · W3 Passenger Flow (TSA/CBP) · W4 NAS/BNATCS Cutover · W5 Sustainability & EPA eGRID · W6 Infratech Maturity · W7 Realtime Data & Hub Cohort Benchmarking',
+          '- **Active U.S. Airport Baselines**: `JFK`, `DEN`, `LAX`, `ORD`, `ATL`, `DFW`, `DCA`, `SDF`, `GEG`',
           '',
-          'Expand any job on the right to view its **Single Specific Purpose** and **Job LLM Sub-Conversation**, or tell me what job you would like to create, update, abort, or remove.',
+          'Send a message below to create, update, abort, remove, or inspect single-purpose LLM jobs in `PGlite` and `pg-boss`.',
         ].join('\n'),
       },
     ],
   },
 ]
 
-const PROMPT_STARTERS = [
-  'Create a W1 job for JFK to audit AIP grant drawdown and DSCR coverage',
-  'Update JOB-4091 purpose to verify Runway 34L surface radar cutover latency',
-  'Abort JOB-4085 in pg-boss',
-  'Remove JOB-4088 from the job queue',
+const BASE_PROMPT_STARTERS = [
+  'Create a W1 job for ORD to audit AIP grant drawdown and Senior DSCR coverage',
+  'Create a W4 job for DEN to verify BNATCS surface radar cutover and ASPM delay savings',
+  'Create a W3 job for ATL to evaluate TSA Touchless ID and biometric bag-drop Erlang-C queues',
+  'Create a W2 job for JFK to evaluate ACRP Report 164 ORAT readiness and P3 LLCR',
 ]
 
 function renderFormattedText(raw: string) {
@@ -80,11 +79,10 @@ export default function App() {
   const clientLogger: IClientLogger = createClientLogger('/api/logs/client')
   const apiClient: IEcsApiClient = createEcsApiClient(clientLogger)
 
-  const [jobs, setJobs] = createSignal<EcsJob[]>(INITIAL_ECS_JOBS)
-  const [selectedJobId, setSelectedJobId] = createSignal<string>(INITIAL_ECS_JOBS[0].id)
-  const [expandedJobIds, setExpandedJobIds] = createSignal<Record<string, boolean>>({
-    'JOB-4091': true,
-  })
+  const [jobs, setJobs] = createSignal<EcsJob[]>([])
+  const [selectedJobId, setSelectedJobId] = createSignal<string>('')
+  const [expandedJobIds, setExpandedJobIds] = createSignal<Record<string, boolean>>({})
+  const [skillsCatalog, setSkillsCatalog] = createSignal<SkillCatalogEntry[]>([])
   const [statusFilter, setStatusFilter] = createSignal<'all' | JobStatus>('all')
   const [searchQuery, setSearchQuery] = createSignal('')
   const [inputPrompt, setInputPrompt] = createSignal('')
@@ -92,26 +90,32 @@ export default function App() {
   const [routineUpdatesEnabled, setRoutineUpdatesEnabled] = createSignal(true)
   const [recentSubChatUpdates, setRecentSubChatUpdates] = createSignal<JobSubChatUpdate[]>([])
   const [mobileView, setMobileView] = createSignal<'split' | 'jobs' | 'chat'>('split')
-  const [isDispatchModalOpen, setIsDispatchModalOpen] = createSignal(false)
   const [isSkillsModalOpen, setIsSkillsModalOpen] = createSignal(false)
+  const [conversationModalJobId, setConversationModalJobId] = createSignal<string | null>(
+    null,
+  )
 
-  // Model Connection Settings State
+  // Model Connection & Config File Settings State
   const [showConnectionBar, setShowConnectionBar] = createSignal(true)
-  const [baseUrl, setBaseUrl] = createSignal('https://api.openai.com/v1')
-  const [modelId, setModelId] = createSignal('gpt-4o-mini')
-  const [apiToken, setApiToken] = createSignal('')
+  const [serverPort, setServerPort] = createSignal<number>(3000)
+  const [configFileName, setConfigFileName] = createSignal<string>('config.json')
+  const [provider, setProvider] = createSignal<AiProviderType>('gemini')
+  const [baseUrl, setBaseUrl] = createSignal(
+    'https://generativelanguage.googleapis.com',
+  )
+  const [modelId, setModelId] = createSignal('gemini-3.8-flash')
   const [serverHasToken, setServerHasToken] = createSignal(false)
   const [connectionSavedNotice, setConnectionSavedNotice] = createSignal('')
 
   const connectionConfig = createMemo<ModelConnectionConfig>(() => ({
+    provider: provider(),
     baseUrl: baseUrl().trim(),
-    modelId: modelId().trim() || 'gpt-4o-mini',
-    apiToken: apiToken().trim(),
+    modelId: modelId().trim() || 'gemini-3.8-flash',
+    apiToken: '',
+    port: serverPort(),
   }))
 
-  const hasActiveToken = createMemo(
-    () => Boolean(apiToken().trim()) || serverHasToken(),
-  )
+  const hasActiveToken = createMemo(() => serverHasToken())
 
   const {
     messages,
@@ -191,39 +195,52 @@ export default function App() {
   onMount(() => {
     clientLogger.info('client.app_mounted')
 
-    let localConnection: Partial<ModelConnectionConfig> | null = null
-    try {
-      const saved = window.localStorage.getItem(STORAGE_KEY_CONNECTION)
-      if (saved) {
-        localConnection = JSON.parse(saved) as Partial<ModelConnectionConfig>
-        if (typeof localConnection.baseUrl === 'string') setBaseUrl(localConnection.baseUrl)
-        if (typeof localConnection.modelId === 'string') setModelId(localConnection.modelId)
-        if (typeof localConnection.apiToken === 'string') setApiToken(localConnection.apiToken)
-      }
-    } catch {
-      // Ignore storage restrictions
-    }
-
     apiClient.fetchConnection().then((serverConn) => {
       if (!serverConn) return
-      if (!localConnection?.baseUrl && serverConn.baseUrl) {
+      if (typeof serverConn.port === 'number' && serverConn.port > 0) {
+        setServerPort(serverConn.port)
+      }
+      if (serverConn.configFile) {
+        setConfigFileName(serverConn.configFile)
+      }
+      if (serverConn.provider === 'gemini' || serverConn.provider === 'openai') {
+        setProvider(serverConn.provider)
+      }
+      if (serverConn.baseUrl) {
         setBaseUrl(serverConn.baseUrl)
       }
-      if (!localConnection?.modelId && serverConn.modelId) {
+      if (serverConn.modelId) {
         setModelId(serverConn.modelId)
       }
       setServerHasToken(Boolean(serverConn.hasToken))
 
-      if (localConnection?.apiToken || localConnection?.baseUrl || localConnection?.modelId) {
-        apiClient.saveConnection(connectionConfig()).then((updated) => {
-          if (updated) setServerHasToken(Boolean(updated.hasToken))
-        })
+      try {
+        window.localStorage.setItem(
+          STORAGE_KEY_CONNECTION,
+          JSON.stringify({
+            provider: serverConn.provider,
+            baseUrl: serverConn.baseUrl,
+            modelId: serverConn.modelId,
+            port: serverConn.port,
+          }),
+        )
+      } catch {
+        // Ignore storage restrictions
       }
     })
 
     apiClient.fetchJobs().then((serverJobs) => {
-      if (serverJobs?.length) {
+      if (serverJobs) {
         setJobs(serverJobs)
+        if (serverJobs[0] && !selectedJobId()) {
+          setSelectedJobId(serverJobs[0].id)
+        }
+      }
+    })
+
+    apiClient.fetchSkillsCatalog().then((catalog) => {
+      if (catalog?.skills) {
+        setSkillsCatalog(catalog.skills)
       }
     })
 
@@ -243,8 +260,8 @@ export default function App() {
     })
   })
 
-  const saveConnectionSettings = async (e: SubmitEvent) => {
-    e.preventDefault()
+  const saveConnectionSettings = async (e?: SubmitEvent) => {
+    e?.preventDefault()
     const current = connectionConfig()
     try {
       window.localStorage.setItem(STORAGE_KEY_CONNECTION, JSON.stringify(current))
@@ -254,8 +271,19 @@ export default function App() {
 
     const updated = await apiClient.saveConnection(current)
     if (updated) {
+      if (typeof updated.port === 'number' && updated.port > 0) {
+        setServerPort(updated.port)
+      }
+      if (updated.configFile) {
+        setConfigFileName(updated.configFile)
+      }
+      if (updated.provider === 'gemini' || updated.provider === 'openai') {
+        setProvider(updated.provider)
+      }
+      if (updated.baseUrl) setBaseUrl(updated.baseUrl)
+      if (updated.modelId) setModelId(updated.modelId)
       setServerHasToken(Boolean(updated.hasToken))
-      setConnectionSavedNotice('Synced with server')
+      setConnectionSavedNotice(`Synchronized with ${updated.configFile || 'config.json'}`)
     } else {
       setConnectionSavedNotice('Saved locally')
     }
@@ -278,6 +306,53 @@ export default function App() {
   const selectedJob = createMemo(
     () => jobs().find((j) => j.id === selectedJobId()) ?? jobs()[0],
   )
+
+  const activeConversationJob = createMemo(() => {
+    const id = conversationModalJobId()
+    if (!id) return null
+    return jobs().find((j) => j.id === id) ?? null
+  })
+
+  const handleViewConversation = (job: EcsJob, e: MouseEvent) => {
+    e.stopPropagation()
+    setSelectedJobId(job.id)
+    setConversationModalJobId(job.id)
+    clientLogger.info('client.job_conversation_modal_opened', {
+      jobId: job.id,
+      code: job.code,
+      airportIata: job.airportIata,
+    })
+  }
+
+  const handleDownloadPdfReport = (
+    job: EcsJob,
+    e?: MouseEvent,
+    reportCode?: string,
+  ) => {
+    e?.stopPropagation()
+    const code = reportCode || job.reports?.[0]?.reportCode
+    const url = apiClient.getJobPdfDownloadUrl(job.id, code)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${job.id}-${job.airportIata}-${code || 'Report'}.pdf`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
+  const handleSendJobConversationMessage = async (
+    jobId: string,
+    message: string,
+  ) => {
+    const result = await apiClient.sendJobConversationMessage(jobId, message)
+    if (result?.jobs) {
+      setJobs(result.jobs)
+    } else if (result?.job) {
+      setJobs((prev) =>
+        prev.map((j) => (j.id === result.job!.id ? result.job! : j)),
+      )
+    }
+  }
 
   const filteredJobs = createMemo(() => {
     const filter = statusFilter()
@@ -318,7 +393,6 @@ export default function App() {
       headers: {
         'x-model-id': conn.modelId,
         ...(conn.baseUrl ? { 'x-base-url': conn.baseUrl } : {}),
-        ...(conn.apiToken ? { 'x-api-token': conn.apiToken } : {}),
       },
     }
   }
@@ -397,24 +471,32 @@ export default function App() {
     }
   }
 
-  const handleCreateJob = async (payload: {
-    code: WorkflowCode
-    airportIata: string
-    title: string
-    purpose: string
-  }) => {
-    const result = await apiClient.createJob(payload)
+  const handleRemoveJob = async (job: EcsJob, e: MouseEvent) => {
+    e.stopPropagation()
+    const previousJobs = jobs()
+    setJobs((prev) => prev.filter((item) => item.id !== job.id))
+    if (conversationModalJobId() === job.id) {
+      setConversationModalJobId(null)
+    }
+
+    const result = await apiClient.removeJob(job.id)
     if (result?.jobs) {
       setJobs(result.jobs)
-    } else if (result?.job) {
-      setJobs((prev) => [result.job!, ...prev])
+    } else if (!result) {
+      setJobs(previousJobs)
     }
-    if (result?.job?.id) {
-      setSelectedJobId(result.job.id)
-      setExpandedJobIds((prev) => ({ ...prev, [result.job!.id]: true }))
-    }
-    setIsDispatchModalOpen(false)
   }
+
+  const promptStarters = createMemo(() => {
+    const active = selectedJob()
+    if (!active) return BASE_PROMPT_STARTERS
+    return [
+      BASE_PROMPT_STARTERS[0],
+      `Update ${active.id} purpose to evaluate ${active.airportIata} peak-hour capacity and DSCR`,
+      `Abort ${active.id}`,
+      `Inspect ${active.id} (${active.code} · ${active.airportIata}) and summarize its sub-conversation`,
+    ]
+  })
 
   return (
     <div class="workspace-shell">
@@ -434,10 +516,6 @@ export default function App() {
         onOpenSkillsModal={() => {
           setIsSkillsModalOpen(true)
           clientLogger.info('client.skills_modal_opened')
-        }}
-        onOpenDispatchModal={() => {
-          setIsDispatchModalOpen(true)
-          clientLogger.info('client.dispatch_modal_opened')
         }}
       />
 
@@ -514,14 +592,17 @@ export default function App() {
 
           <Show when={showConnectionBar()}>
             <ConnectionBar
+              port={serverPort()}
+              configFile={configFileName()}
+              provider={provider()}
               baseUrl={baseUrl()}
               modelId={modelId()}
-              apiToken={apiToken()}
               hasActiveToken={hasActiveToken()}
               savedNotice={connectionSavedNotice()}
+              onPortChange={setServerPort}
+              onProviderChange={setProvider}
               onBaseUrlChange={setBaseUrl}
               onModelIdChange={setModelId}
-              onApiTokenChange={setApiToken}
               onSave={saveConnectionSettings}
             />
           </Show>
@@ -590,7 +671,7 @@ export default function App() {
             </Show>
 
             <div class="prompt-starters" aria-label="Suggested job management commands">
-              <For each={PROMPT_STARTERS}>
+              <For each={promptStarters()}>
                 {(starter) => (
                   <button
                     type="button"
@@ -665,35 +746,39 @@ export default function App() {
           onSearchChange={setSearchQuery}
           onFilterChange={setStatusFilter}
           onToggleExpand={toggleJobExpanded}
+          onViewConversation={handleViewConversation}
+          onDownloadPdfReport={handleDownloadPdfReport}
           onAskAboutJob={handleAskAboutJob}
           onAbortJob={handleAbortJob}
+          onRemoveJob={handleRemoveJob}
         />
       </div>
 
-      <Show when={isDispatchModalOpen()}>
-        <DispatchJobModal
-          onClose={() => setIsDispatchModalOpen(false)}
-          onSubmit={handleCreateJob}
-        />
+      <Show when={activeConversationJob()}>
+        {(job) => (
+          <JobConversationModal
+            job={job()}
+            onClose={() => {
+              setConversationModalJobId(null)
+              clientLogger.info('client.job_conversation_modal_closed')
+            }}
+            onSendMessage={handleSendJobConversationMessage}
+            onDownloadReport={(targetJob, reportCode) =>
+              handleDownloadPdfReport(targetJob, undefined, reportCode)
+            }
+          />
+        )}
       </Show>
 
       <Show when={isSkillsModalOpen()}>
         <SkillsCatalogModal
+          skills={skillsCatalog()}
           onClose={() => {
             setIsSkillsModalOpen(false)
             clientLogger.info('client.skills_modal_closed')
           }}
           onSelectSkill={(skillId, workflowCode) => {
             clientLogger.info('client.skill_selected', { skillId, workflowCode })
-          }}
-          onDispatchSkillJob={async (payload) => {
-            setIsSkillsModalOpen(false)
-            clientLogger.info('client.skill_job_dispatched', {
-              code: payload.code,
-              airportIata: payload.airportIata,
-              title: payload.title,
-            })
-            await handleCreateJob(payload)
           }}
         />
       </Show>

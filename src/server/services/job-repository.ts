@@ -1,14 +1,20 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { PGlite } from '@electric-sql/pglite'
 import { PgBoss } from 'pg-boss'
-import {
-  INITIAL_ECS_JOBS,
-  type EcsJob,
-  type JobSubChatUpdate,
-  type WorkflowCode,
+import type {
+  EcsJob,
+  JobSubChatUpdate,
+  WorkflowCode,
 } from '../../client/src/types/jobs.ts'
 import type { ILogger } from '../logging/logger.ts'
 import type { IJobAgentRunner } from './job-agent-runner.ts'
 import type { ISkillRegistry } from '../ai/skills-catalog.ts'
+import { US_AIRPORT_BASELINES } from '../ai/us-airport-data.ts'
+import {
+  UsAirportPdfReportService,
+  type IPdfReportService,
+} from './pdf-report-service.ts'
 
 type JobChatMessage = EcsJob['chatHistory'][number]
 
@@ -45,6 +51,10 @@ export interface IJobWriter {
   update(id: string, patch: UpdateJobInput): Promise<EcsJob | undefined>
   abort(id: string, reason?: string): Promise<EcsJob | undefined>
   remove(id: string): Promise<boolean>
+  appendConversationMessage(
+    id: string,
+    userMessage: string,
+  ): Promise<EcsJob | undefined>
 }
 
 export interface IJobEventStream {
@@ -54,7 +64,6 @@ export interface IJobEventStream {
 
 export interface IJobLifecycleScheduler {
   init(): Promise<void>
-  tickProgress(): Promise<boolean>
 }
 
 export interface IJobRepository
@@ -64,18 +73,6 @@ export interface IJobRepository
     IJobLifecycleScheduler {}
 
 const JOB_QUEUE_NAME = 'ecs-llm-job'
-
-const AIRPORT_LOOKUP: Record<string, { icao: string; name: string }> = {
-  JFK: { icao: 'KJFK', name: 'John F. Kennedy International' },
-  DEN: { icao: 'KDEN', name: 'Denver International' },
-  LAX: { icao: 'KLAX', name: 'Los Angeles International' },
-  ORD: { icao: 'KORD', name: 'Chicago O’Hare International' },
-  ATL: { icao: 'KATL', name: 'Hartsfield-Jackson Atlanta International' },
-  DFW: { icao: 'KDFW', name: 'Dallas/Fort Worth International' },
-  DCA: { icao: 'KDCA', name: 'Ronald Reagan Washington National' },
-  SDF: { icao: 'KSDF', name: 'Louisville Muhammad Ali International' },
-  GEG: { icao: 'KGEG', name: 'Spokane International' },
-}
 
 const WORKFLOW_LOOKUP: Record<
   WorkflowCode,
@@ -150,6 +147,7 @@ export class PglitePgBossJobManager implements IJobRepository {
   private readonly logger: ILogger
   private readonly agentRunner: IJobAgentRunner
   private readonly skillRegistry: ISkillRegistry
+  private readonly pdfReportService: IPdfReportService
   private readonly listeners = new Set<JobsSubscriber>()
   private readonly progressListeners = new Set<JobProgressSubscriber>()
   private readonly activeControllers = new Map<string, AbortController>()
@@ -157,18 +155,23 @@ export class PglitePgBossJobManager implements IJobRepository {
   private jobsCache: EcsJob[] = []
   private initialized = false
   private nextSequence = 4100
-  private routineRotationIndex = 0
 
   constructor(
     logger: ILogger,
     agentRunner: IJobAgentRunner,
     skillRegistry: ISkillRegistry,
-    seedJobs: EcsJob[] = INITIAL_ECS_JOBS,
+    pdfReportService?: IPdfReportService,
+    seedJobs: EcsJob[] = [],
   ) {
     this.logger = logger
     this.agentRunner = agentRunner
     this.skillRegistry = skillRegistry
-    this.jobsCache = structuredClone(seedJobs)
+    this.pdfReportService =
+      pdfReportService ?? new UsAirportPdfReportService(logger)
+    this.jobsCache = structuredClone(seedJobs).map((job) => ({
+      ...job,
+      reports: this.pdfReportService.ensureJobReportsOnDisk(job),
+    }))
     this.nextSequence = 4100 + seedJobs.length
 
     this.pg = new PGlite()
@@ -305,11 +308,14 @@ export class PglitePgBossJobManager implements IJobRepository {
   async create(input: CreateJobInput): Promise<EcsJob> {
     const idNumber = this.nextSequence++
     const code: WorkflowCode = input.code || 'W4'
-    const airportIata = (input.airportIata || 'JFK').toUpperCase()
+    const requestedIata = (input.airportIata || 'JFK').toUpperCase()
+    const baseline =
+      US_AIRPORT_BASELINES[requestedIata] ?? US_AIRPORT_BASELINES.JFK
+    const airportIata = baseline.iata
     const wf = WORKFLOW_LOOKUP[code] ?? WORKFLOW_LOOKUP.W4
-    const ap = AIRPORT_LOOKUP[airportIata] ?? {
-      icao: `K${airportIata}`,
-      name: `${airportIata} Airport`,
+    const ap = {
+      icao: baseline.icao,
+      name: baseline.name,
     }
 
     const title = input.title?.trim() || `${wf.name} Verification Run`
@@ -373,6 +379,7 @@ export class PglitePgBossJobManager implements IJobRepository {
       ],
       chatHistory: initialChatHistory,
     }
+    newJob.reports = this.pdfReportService.ensureJobReportsOnDisk(newJob)
 
     this.jobRevisions.set(newJob.id, 1)
 
@@ -456,9 +463,22 @@ export class PglitePgBossJobManager implements IJobRepository {
       })
     }
 
+    const shouldReexecute =
+      purposeChanged ||
+      titleChanged ||
+      Boolean(patch.code && patch.code !== current.code) ||
+      patch.status === 'in_progress'
+
+    const nextStatus: EcsJob['status'] =
+      patch.status ?? (shouldReexecute ? 'in_progress' : current.status)
+
     const updated: EcsJob = {
       ...current,
       ...patch,
+      status: nextStatus,
+      lifecycleState:
+        nextStatus === 'in_progress' ? wf.state : (patch.lifecycleState ?? current.lifecycleState),
+      progress: shouldReexecute && nextStatus === 'in_progress' ? 25 : (patch.progress ?? current.progress),
       code: nextCode,
       workflowName: wf.name,
       ecsSystem: wf.system,
@@ -469,7 +489,7 @@ export class PglitePgBossJobManager implements IJobRepository {
       chatHistory: updatedChatHistory,
     }
 
-    if (wasRunning && (purposeChanged || titleChanged || patch.status === 'in_progress')) {
+    if (shouldReexecute && nextStatus === 'in_progress') {
       const activeCtrl = this.activeControllers.get(current.id)
       if (activeCtrl) {
         activeCtrl.abort('Running job updated by operator')
@@ -487,7 +507,7 @@ export class PglitePgBossJobManager implements IJobRepository {
       const nextRev = (this.jobRevisions.get(current.id) ?? 1) + 1
       this.jobRevisions.set(current.id, nextRev)
 
-      if (this.initialized && updated.status === 'in_progress') {
+      if (this.initialized) {
         const newBossId = await this.boss.send(JOB_QUEUE_NAME, {
           jobId: updated.id,
           purpose: updated.purpose,
@@ -522,9 +542,12 @@ export class PglitePgBossJobManager implements IJobRepository {
     if (idx === -1) return undefined
 
     const current = this.jobsCache[idx]
-    if (current.status !== 'in_progress') {
+    if (current.status === 'failed' && current.lifecycleState === 'Aborted') {
       return structuredClone(current)
     }
+
+    const nextRev = (this.jobRevisions.get(current.id) ?? 1) + 1
+    this.jobRevisions.set(current.id, nextRev)
 
     const activeCtrl = this.activeControllers.get(current.id)
     if (activeCtrl) {
@@ -609,6 +632,20 @@ export class PglitePgBossJobManager implements IJobRepository {
 
     this.jobsCache.splice(idx, 1)
 
+    if (target.reports?.length) {
+      const reportsDir = this.pdfReportService.getReportsDirectory()
+      for (const rep of target.reports) {
+        const filePath = path.join(reportsDir, rep.fileName)
+        try {
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath)
+          }
+        } catch {
+          // Ignore file removal error
+        }
+      }
+    }
+
     if (this.initialized) {
       await this.pg.query('DELETE FROM ecs_jobs WHERE id = $1', [target.id])
     }
@@ -621,82 +658,60 @@ export class PglitePgBossJobManager implements IJobRepository {
     return true
   }
 
-  async tickProgress(): Promise<boolean> {
-    let changed = false
-    const inProgressIndices: number[] = []
+  async appendConversationMessage(
+    id: string,
+    userMessage: string,
+  ): Promise<EcsJob | undefined> {
+    const idx = this.jobsCache.findIndex(
+      (j) => j.id.toUpperCase() === id.trim().toUpperCase(),
+    )
+    if (idx === -1) return undefined
 
-    for (let i = 0; i < this.jobsCache.length; i++) {
-      const job = this.jobsCache[i]
-      if (job.status !== 'in_progress') continue
-      changed = true
-      inProgressIndices.push(i)
-      const nextProgress = job.progress >= 96 ? 35 : job.progress + 2
-      const updated: EcsJob = {
-        ...job,
-        progress: nextProgress,
-      }
-      this.jobsCache[i] = updated
-      if (this.initialized) {
-        await this.persistJobToDb(updated)
-      }
+    const current = this.jobsCache[idx]
+    const nowTime = new Date().toISOString().slice(11, 19)
+    const userEntry: JobChatMessage = {
+      id: `msg-u-${Date.now()}`,
+      role: 'user',
+      content: userMessage.trim(),
+      timestamp: nowTime,
     }
 
-    // Routinely advance one active job's sub-conversation and broadcast a concise progress update
-    if (inProgressIndices.length > 0) {
-      const chosenIdx =
-        inProgressIndices[this.routineRotationIndex % inProgressIndices.length]
-      this.routineRotationIndex++
+    const toolPass = this.skillRegistry.executeSkillToolPass({
+      ...current,
+      chatHistory: [...current.chatHistory, userEntry],
+    })
 
-      const targetJob = this.jobsCache[chosenIdx]
-      const nowTime = new Date().toISOString().slice(11, 19)
-      const toolPass = this.skillRegistry.executeSkillToolPass(targetJob)
-
-      const subMsgText = `[${targetJob.progress}%] ${toolPass.subConversationReply}`
-
-      const newSubMessage: JobChatMessage = {
-        id: `sub-${Date.now()}`,
-        role: 'assistant',
-        content: subMsgText,
-        timestamp: nowTime,
-      }
-
-      const trimmedHistory =
-        targetJob.chatHistory.length >= 6
-          ? [
-              targetJob.chatHistory[0],
-              ...targetJob.chatHistory.slice(-4),
-              newSubMessage,
-            ]
-          : [...targetJob.chatHistory, newSubMessage]
-
-      const updatedWithSubChat: EcsJob = {
-        ...targetJob,
-        keyMetricLabel: toolPass.keyMetricLabel,
-        keyMetricValue: toolPass.keyMetricValue,
-        chatHistory: trimmedHistory,
-      }
-
-      this.jobsCache[chosenIdx] = updatedWithSubChat
-      if (this.initialized) {
-        await this.persistJobToDb(updatedWithSubChat)
-      }
-
-      this.logger.info('job.subchat_progress_tick', {
-        jobId: updatedWithSubChat.id,
-        code: updatedWithSubChat.code,
-        airportIata: updatedWithSubChat.airportIata,
-        progress: updatedWithSubChat.progress,
-        skillId: toolPass.skillId,
-        reportCode: toolPass.reportCode,
-      })
-
-      this.emitProgressUpdate(updatedWithSubChat, subMsgText, nowTime)
+    const assistantReply = `${toolPass.subConversationReply} (Addressed operator prompt: "${userMessage.trim().slice(0, 80)}")`
+    const assistantEntry: JobChatMessage = {
+      id: `msg-a-${Date.now() + 1}`,
+      role: 'assistant',
+      content: assistantReply,
+      timestamp: nowTime,
     }
 
-    if (changed) {
-      this.notifySubscribers()
+    const updated: EcsJob = {
+      ...current,
+      keyMetricLabel: toolPass.keyMetricLabel,
+      keyMetricValue: toolPass.keyMetricValue,
+      chatHistory: [...current.chatHistory, userEntry, assistantEntry],
     }
-    return changed
+    updated.reports = this.pdfReportService.ensureJobReportsOnDisk(updated)
+
+    this.jobsCache[idx] = updated
+    if (this.initialized) {
+      await this.persistJobToDb(updated)
+    }
+
+    this.logger.info('job.conversation_message_appended', {
+      jobId: updated.id,
+      code: updated.code,
+      airportIata: updated.airportIata,
+      reportCode: toolPass.reportCode,
+    })
+
+    this.notifySubscribers()
+    this.emitProgressUpdate(updated, assistantReply, nowTime)
+    return structuredClone(updated)
   }
 
   subscribe(listener: JobsSubscriber): () => void {

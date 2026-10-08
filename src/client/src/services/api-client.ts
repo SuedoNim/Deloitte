@@ -1,29 +1,34 @@
 import type {
+  AiProviderType,
   EcsJob,
   JobSubChatUpdate,
   ModelConnectionConfig,
-  WorkflowCode,
+  SkillCatalogSummary,
 } from '../types/jobs'
 import type { IClientLogger } from '../lib/logger'
 
 interface PublicConnectionStatus {
+  provider: AiProviderType
   baseUrl: string
   modelId: string
   hasToken: boolean
   tokenPreview: string
-}
-
-interface CreateJobPayload {
-  code: WorkflowCode
-  airportIata: string
-  title: string
-  purpose?: string
+  port: number
+  configFile: string
 }
 
 interface IJobsApiClient {
   fetchJobs(): Promise<EcsJob[] | null>
-  createJob(payload: CreateJobPayload): Promise<{ job?: EcsJob; jobs?: EcsJob[] } | null>
   abortJob(jobId: string): Promise<{ job?: EcsJob; jobs?: EcsJob[] } | null>
+  removeJob(
+    jobId: string,
+  ): Promise<{ removed?: boolean; jobId?: string; jobs?: EcsJob[] } | null>
+  sendJobConversationMessage(
+    jobId: string,
+    message: string,
+  ): Promise<{ job?: EcsJob; jobs?: EcsJob[] } | null>
+  getJobPdfDownloadUrl(jobId: string, reportCode?: string): string
+  fetchSkillsCatalog(): Promise<SkillCatalogSummary | null>
   subscribeJobsStream(handlers: {
     onOpen: () => void
     onJobsSync: (jobs: EcsJob[]) => void
@@ -61,31 +66,6 @@ class HttpEcsApiClient implements IEcsApiClient {
     }
   }
 
-  async createJob(
-    payload: CreateJobPayload,
-  ): Promise<{ job?: EcsJob; jobs?: EcsJob[] } | null> {
-    try {
-      const res = await fetch('/api/jobs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      if (!res.ok) return null
-      const data = (await res.json()) as { job?: EcsJob; jobs?: EcsJob[] }
-      this.logger.info('client.job_dispatched', {
-        jobId: data.job?.id,
-        code: payload.code,
-        airportIata: payload.airportIata,
-      })
-      return data
-    } catch (err) {
-      this.logger.error('client.job_dispatch_failed', {
-        error: err instanceof Error ? err.message : String(err),
-      })
-      return null
-    }
-  }
-
   async abortJob(
     jobId: string,
   ): Promise<{ job?: EcsJob; jobs?: EcsJob[] } | null> {
@@ -104,6 +84,86 @@ class HttpEcsApiClient implements IEcsApiClient {
       })
       return null
     }
+  }
+
+  async removeJob(
+    jobId: string,
+  ): Promise<{ removed?: boolean; jobId?: string; jobs?: EcsJob[] } | null> {
+    try {
+      const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok) return null
+      const data = (await res.json()) as {
+        removed?: boolean
+        jobId?: string
+        jobs?: EcsJob[]
+      }
+      this.logger.info('client.job_removed', { jobId })
+      return data
+    } catch (err) {
+      this.logger.error('client.job_remove_failed', {
+        jobId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return null
+    }
+  }
+
+  async fetchSkillsCatalog(): Promise<SkillCatalogSummary | null> {
+    try {
+      const res = await fetch('/api/skills')
+      if (!res.ok) return null
+      const data = (await res.json()) as SkillCatalogSummary
+      this.logger.info('client.skills_catalog_fetched', {
+        skillsCount: data.skills?.length ?? 0,
+      })
+      return data
+    } catch (err) {
+      this.logger.error('client.skills_catalog_fetch_failed', {
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return null
+    }
+  }
+
+  async sendJobConversationMessage(
+    jobId: string,
+    message: string,
+  ): Promise<{ job?: EcsJob; jobs?: EcsJob[] } | null> {
+    try {
+      const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/conversation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      })
+      if (!res.ok) return null
+      const data = (await res.json()) as { job?: EcsJob; jobs?: EcsJob[] }
+      this.logger.info('client.job_conversation_message_sent', {
+        jobId,
+        messageLength: message.length,
+      })
+      return data
+    } catch (err) {
+      this.logger.error('client.job_conversation_message_failed', {
+        jobId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return null
+    }
+  }
+
+  getJobPdfDownloadUrl(jobId: string, reportCode?: string): string {
+    const query = reportCode
+      ? `?reportCode=${encodeURIComponent(reportCode)}`
+      : ''
+    const url = `/api/jobs/${encodeURIComponent(jobId)}/report.pdf${query}`
+    this.logger.info('client.job_pdf_report_downloaded', {
+      jobId,
+      reportCode: reportCode ?? 'primary',
+      url,
+    })
+    return url
   }
 
   async fetchConnection(): Promise<PublicConnectionStatus | null> {

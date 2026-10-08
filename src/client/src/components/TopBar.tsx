@@ -5,7 +5,6 @@ interface TopBarProps {
   onSelectView: (view: 'split' | 'jobs' | 'chat') => void
   onToggleConnectionBar: () => void
   onOpenSkillsModal: () => void
-  onOpenDispatchModal: () => void
 }
 
 export function TopBar(props: TopBarProps) {
@@ -52,16 +51,6 @@ export function TopBar(props: TopBarProps) {
           AI Skills & Tools (S1–S8)
         </button>
       </nav>
-
-      <div class="topbar-actions">
-        <button
-          type="button"
-          class="btn-primary"
-          onClick={() => props.onOpenDispatchModal()}
-        >
-          + Dispatch Job
-        </button>
-      </div>
     </header>
   )
 }

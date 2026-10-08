@@ -1,11 +1,23 @@
-import type { ModelConnectionConfig } from '../../client/src/types/jobs.ts'
+import path from 'node:path'
+import type {
+  AiProviderType,
+  ModelConnectionConfig,
+} from '../../client/src/types/jobs.ts'
 import type { ILogger } from '../logging/logger.ts'
+import { isGeminiConnection } from '../ai/gemini-client.ts'
+import {
+  FileServiceConfigStore,
+  type IServiceConfigStore,
+} from './config-service.ts'
 
 export interface PublicConnectionStatus {
+  provider: AiProviderType
   baseUrl: string
   modelId: string
   hasToken: boolean
   tokenPreview: string
+  port: number
+  configFile: string
 }
 
 export interface IConnectionStore {
@@ -18,29 +30,46 @@ export interface IConnectionStore {
 }
 
 export class InMemoryConnectionStore implements IConnectionStore {
-  private config: ModelConnectionConfig
   private readonly logger: ILogger
+  private readonly configStore: IServiceConfigStore
 
-  constructor(logger: ILogger, initial?: Partial<ModelConnectionConfig>) {
+  constructor(
+    logger: ILogger,
+    configStore?: IServiceConfigStore,
+    initial?: Partial<ModelConnectionConfig>,
+  ) {
     this.logger = logger
-    this.config = {
-      baseUrl:
-        initial?.baseUrl?.trim() ||
-        process.env.OPENAI_BASE_URL?.trim() ||
-        'https://api.openai.com/v1',
-      modelId:
-        initial?.modelId?.trim() ||
-        process.env.OPENAI_MODEL?.trim() ||
-        'gpt-4o-mini',
-      apiToken:
-        initial?.apiToken?.trim() ||
-        process.env.OPENAI_API_KEY?.trim() ||
-        '',
+    this.configStore = configStore ?? new FileServiceConfigStore(logger)
+
+    if (
+      initial?.provider ||
+      initial?.baseUrl ||
+      initial?.modelId ||
+      initial?.apiToken ||
+      initial?.port
+    ) {
+      this.configStore.updateConfig({
+        port: initial.port,
+        aiConnection: {
+          provider: initial.provider,
+          baseUrl: initial.baseUrl,
+          modelId: initial.modelId,
+          apiToken: initial.apiToken,
+        },
+      })
     }
   }
 
   getPublicStatus(): PublicConnectionStatus {
-    const raw = this.config.apiToken.trim()
+    const cfg = this.configStore.getConfig()
+    const provider: AiProviderType = isGeminiConnection(cfg.aiConnection)
+      ? 'gemini'
+      : 'openai'
+    const envToken =
+      provider === 'gemini'
+        ? process.env.GEMINI_API_KEY?.trim() || ''
+        : process.env.OPENAI_API_KEY?.trim() || ''
+    const raw = cfg.aiConnection.apiToken.trim() || envToken
     const hasToken = Boolean(raw)
     const tokenPreview =
       hasToken && raw.length > 6
@@ -50,29 +79,44 @@ export class InMemoryConnectionStore implements IConnectionStore {
           : ''
 
     return {
-      baseUrl: this.config.baseUrl,
-      modelId: this.config.modelId,
+      provider,
+      baseUrl: cfg.aiConnection.baseUrl,
+      modelId: cfg.aiConnection.modelId,
       hasToken,
       tokenPreview,
+      port: cfg.server.port,
+      configFile: path.basename(this.configStore.getConfigFilePath()),
     }
   }
 
   update(patch: Partial<ModelConnectionConfig>): PublicConnectionStatus {
+    const aiPatch: Partial<ModelConnectionConfig> = {}
+    if (patch.provider === 'gemini' || patch.provider === 'openai') {
+      aiPatch.provider = patch.provider
+    }
     if (typeof patch.baseUrl === 'string') {
-      this.config.baseUrl = patch.baseUrl.trim() || 'https://api.openai.com/v1'
+      aiPatch.baseUrl = patch.baseUrl.trim()
     }
     if (typeof patch.modelId === 'string') {
-      this.config.modelId = patch.modelId.trim() || 'gpt-4o-mini'
+      aiPatch.modelId = patch.modelId.trim()
     }
     if (typeof patch.apiToken === 'string') {
-      this.config.apiToken = patch.apiToken.trim()
+      aiPatch.apiToken = patch.apiToken.trim()
     }
+
+    this.configStore.updateConfig({
+      port: patch.port,
+      aiConnection: aiPatch,
+    })
 
     const status = this.getPublicStatus()
     this.logger.info('connection.updated', {
+      provider: status.provider,
       baseUrl: status.baseUrl,
       modelId: status.modelId,
       hasToken: status.hasToken,
+      port: status.port,
+      configFile: status.configFile,
     })
     return status
   }
@@ -81,33 +125,70 @@ export class InMemoryConnectionStore implements IConnectionStore {
     override?: Partial<ModelConnectionConfig>,
     headers?: { apiToken?: string; baseUrl?: string; modelId?: string },
   ): ModelConnectionConfig {
-    if (override?.baseUrl?.trim()) {
-      this.config.baseUrl = override.baseUrl.trim()
-    }
-    if (override?.modelId?.trim()) {
-      this.config.modelId = override.modelId.trim()
-    }
-    if (override?.apiToken?.trim()) {
-      this.config.apiToken = override.apiToken.trim()
+    if (
+      override?.provider ||
+      override?.baseUrl?.trim() ||
+      override?.modelId?.trim() ||
+      override?.apiToken?.trim() ||
+      typeof override?.port === 'number'
+    ) {
+      this.configStore.updateConfig({
+        port: override.port,
+        aiConnection: {
+          ...(override.provider ? { provider: override.provider } : {}),
+          ...(override.baseUrl?.trim()
+            ? { baseUrl: override.baseUrl.trim() }
+            : {}),
+          ...(override.modelId?.trim()
+            ? { modelId: override.modelId.trim() }
+            : {}),
+          ...(override.apiToken?.trim()
+            ? { apiToken: override.apiToken.trim() }
+            : {}),
+        },
+      })
     }
 
+    const persisted = this.configStore.getAiConnection()
+    const port = this.configStore.getServerPort()
+    const provider: AiProviderType = isGeminiConnection({
+      provider: override?.provider ?? persisted.provider,
+      modelId: override?.modelId || headers?.modelId || persisted.modelId,
+      baseUrl: override?.baseUrl || headers?.baseUrl || persisted.baseUrl,
+    })
+      ? 'gemini'
+      : 'openai'
+
+    const defaultBaseUrl =
+      provider === 'gemini'
+        ? 'https://generativelanguage.googleapis.com'
+        : 'https://api.openai.com/v1'
+    const defaultModelId =
+      provider === 'gemini' ? 'gemini-3.8-flash' : 'gpt-4o-mini'
+    const envToken =
+      provider === 'gemini'
+        ? process.env.GEMINI_API_KEY?.trim() || ''
+        : process.env.OPENAI_API_KEY?.trim() || ''
+
     return {
+      provider,
       baseUrl:
         override?.baseUrl?.trim() ||
         headers?.baseUrl?.trim() ||
-        this.config.baseUrl.trim() ||
-        'https://api.openai.com/v1',
+        persisted.baseUrl.trim() ||
+        defaultBaseUrl,
       modelId:
         override?.modelId?.trim() ||
         headers?.modelId?.trim() ||
-        this.config.modelId.trim() ||
-        'gpt-4o-mini',
+        persisted.modelId.trim() ||
+        defaultModelId,
       apiToken:
         override?.apiToken?.trim() ||
         headers?.apiToken?.trim() ||
-        this.config.apiToken.trim() ||
-        process.env.OPENAI_API_KEY?.trim() ||
-        '',
+        persisted.apiToken.trim() ||
+        envToken,
+      port,
     }
   }
 }
+

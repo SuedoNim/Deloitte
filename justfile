@@ -74,6 +74,35 @@ serve:
 # Full deployment pipeline: install, check, build frontend + backend, and start production server
 deploy: install check build serve
 
-# Clean build artifacts and temporary TypeScript caches
+# Pack the deployment as a single-press stand-alone executable (./airport-modernization-ecs and ./dist-package/airport-modernization-ecs)
+pack: build-frontend
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "==> Packing single-press executable deployment in ./dist-package ..."
+    rm -rf dist-package dist-package.tar.gz airport-modernization-ecs
+    mkdir -p dist-package/src/client dist-package/logs dist-package/reports dist-package/node_modules/@electric-sql
+    cp -r src/client/dist dist-package/src/client/dist
+    cp config.json dist-package/config.json
+    if [ -d node_modules/@electric-sql/pglite ]; then
+      cp -r node_modules/@electric-sql/pglite dist-package/node_modules/@electric-sql/pglite
+    fi
+    npx esbuild src/server/main.ts --bundle --platform=node --format=esm --minify --external:@electric-sql/pglite --banner:js="import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" --outfile=dist-package/server-bundle.mjs
+    printf '#!/usr/bin/env bash\nset -euo pipefail\nDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\ncd "$DIR"\nexec node "$DIR/server-bundle.mjs" "$@"\n' > dist-package/airport-modernization-ecs
+    chmod +x dist-package/server-bundle.mjs dist-package/airport-modernization-ecs
+    printf '#!/usr/bin/env bash\nset -euo pipefail\nDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\ncd "$DIR/dist-package"\nexec node "$DIR/dist-package/server-bundle.mjs" "$@"\n' > airport-modernization-ecs
+    chmod +x airport-modernization-ecs
+    tar -czf dist-package.tar.gz dist-package
+    echo "==> Single-press executable created: ./airport-modernization-ecs (and ./dist-package/airport-modernization-ecs)"
+    echo "==> Slim deployment archive created: ./dist-package.tar.gz"
+    ls -lh airport-modernization-ecs dist-package/airport-modernization-ecs dist-package.tar.gz
+
+# Alias for pack: create a slim deployment package with a stand-alone executable process
+package-slim: pack
+
+# Run the packaged stand-alone executable
+run-standalone:
+    ./airport-modernization-ecs
+
+# Clean build artifacts, standalone package, and temporary TypeScript caches
 clean:
-    rm -rf src/client/dist src/client/node_modules/.tmp
+    rm -rf src/client/dist src/client/node_modules/.tmp dist-package dist-package.tar.gz airport-modernization-ecs

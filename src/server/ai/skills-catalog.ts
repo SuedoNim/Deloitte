@@ -26,6 +26,8 @@ export interface ISkillRegistry {
   getSkillForWorkflow(code: WorkflowCode): AiSkillDefinition
   getToolsForWorkflow(code: WorkflowCode): DomainAiToolsMap
   getCatalogSummary(): {
+    skillsCount: number
+    toolsCount: number
     skills: AiSkillDefinition[]
     tools: AiToolMetadata[]
   }
@@ -46,6 +48,7 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
       'computeAipGrantAndPfcCapacity',
       'computeCreditAndAirlineRates',
       'evaluateGrantOutlayLifecycle',
+      'generatePdfAssessmentReport',
     ],
     description:
       'Quantifies 5-year NPIAS/CIP capital gaps, 49 U.S.C. § 47109 AIP grant shares (75%–95%), 14 CFR Part 158 PFC bonding ($4.50 cap less $0.11 handling fee), Senior/All-In DSCR, Residual/Compensatory CPE, and DCOH.',
@@ -68,6 +71,7 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
       'evaluateDemandTriggerAndBca',
       'computeProjectEvmAndCsppWindow',
       'evaluateAcrypOratReadinessGate',
+      'generatePdfAssessmentReport',
     ],
     description:
       'Governs FAA TAF/ASV capacity triggers, OMB Circular A-94 Benefit-Cost Analysis (NPV/BCR), DB/PDB/CMAR/DBFOM P3 delivery (LLCR ≥ 1.30x), Earned Value Management (SPI/CPI/CSI/EAC), AC 150/5370-2G CSPP closures, and ACRP 164 ORAT certification.',
@@ -87,6 +91,7 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     boundToolNames: [
       'queryUsAirportBaselineAndSources',
       'computeErlangCQueueAndLaneTarget',
+      'generatePdfAssessmentReport',
     ],
     description:
       'Models Curbside → Biometric Self-Bag-Drop → TSA PreCheck Touchless ID / CT Checkpoints → Boarding → CBP Simplified Arrival FIS using multi-server Erlang-C (M/M/c) queueing math and 95th-percentile wait budgets (W_q95).',
@@ -107,6 +112,7 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
       'queryUsAirportBaselineAndSources',
       'computeBnatcsCutoverRiskAndDelaySavings',
       'computeProjectEvmAndCsppWindow',
+      'generatePdfAssessmentReport',
     ],
     description:
       'Tracks FAA BNATCS national & airport equipment lots (44 surface radars, 200 SAI, 89 TFDM, digital voice switches, fiber telecom), scores low-traffic cutover windows, and monetizes ASPM delay reductions via USDOT VTTS + ADOM.',
@@ -126,6 +132,7 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     boundToolNames: [
       'queryUsAirportBaselineAndSources',
       'computeEgridEmissionsAndGateElectrification',
+      'generatePdfAssessmentReport',
     ],
     description:
       'Computes Scope 1+2 emissions using U.S. EPA eGRID subregional grid factors, quantifies FAA VALE/AEDT 400Hz GPU + PCA gate electrification APU savings, and evaluates geothermal HVAC & solar-storage microgrid EaaS P3s.',
@@ -144,6 +151,7 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     boundToolNames: [
       'queryUsAirportBaselineAndSources',
       'evaluateInfratechAndCohortBenchmark',
+      'generatePdfAssessmentReport',
     ],
     description:
       'Scores airport infratech maturity (0–4) using strictly primary operational evidence, enforces DataReadinessHold gates, quarantines unofficial vendor/consultancy claims, and computes risk-adjusted Infratech NPV.',
@@ -163,6 +171,7 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     boundToolNames: [
       'queryUsAirportBaselineAndSources',
       'evaluateInfratechAndCohortBenchmark',
+      'generatePdfAssessmentReport',
     ],
     description:
       'Monitors U.S. NAS realtime feeds (FAA SWIM, NOTAM, NOAA METAR, AeroAPI, OpenSky, CBP Wait Times) and reconciles batch financial/ops datasets (FAA CATS 5100-127, MSRB EMMA, ASPM, TAF, BTS T-100) across FAA Hub Cohorts.',
@@ -208,10 +217,14 @@ export function getToolsForWorkflow(code: WorkflowCode) {
 }
 
 export function getCatalogSummary(): {
+  skillsCount: number
+  toolsCount: number
   skills: AiSkillDefinition[]
   tools: AiToolMetadata[]
 } {
   return {
+    skillsCount: AI_SKILLS_CATALOG.length,
+    toolsCount: AI_TOOLS_METADATA.length,
     skills: AI_SKILLS_CATALOG,
     tools: AI_TOOLS_METADATA,
   }
@@ -248,7 +261,11 @@ export class UsAirportSkillRegistry implements ISkillRegistry {
     const skill = this.getSkillForWorkflow(code)
     const allTools = this.toolRegistry.createExecutableTools()
     const filtered: Record<string, unknown> = {}
-    for (const name of skill.boundToolNames) {
+    const toolNames = new Set([
+      ...skill.boundToolNames,
+      'generatePdfAssessmentReport',
+    ])
+    for (const name of toolNames) {
       if (name in allTools) {
         filtered[name] = allTools[name as keyof typeof allTools]
       }
@@ -257,16 +274,21 @@ export class UsAirportSkillRegistry implements ISkillRegistry {
   }
 
   getCatalogSummary(): {
+    skillsCount: number
+    toolsCount: number
     skills: AiSkillDefinition[]
     tools: AiToolMetadata[]
   } {
+    const tools = this.toolRegistry.getMetadata()
     this.logger.info('ai_skill.catalog_queried', {
       skillsCount: AI_SKILLS_CATALOG.length,
-      toolsCount: this.toolRegistry.getMetadata().length,
+      toolsCount: tools.length,
     })
     return {
+      skillsCount: AI_SKILLS_CATALOG.length,
+      toolsCount: tools.length,
       skills: AI_SKILLS_CATALOG,
-      tools: this.toolRegistry.getMetadata(),
+      tools: tools,
     }
   }
 

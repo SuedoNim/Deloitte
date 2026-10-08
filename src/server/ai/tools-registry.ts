@@ -1,7 +1,15 @@
 import { tool } from 'ai'
 import { z } from 'zod'
-import type { EcsJob } from '../../client/src/types/jobs.ts'
+import type {
+  EcsJob,
+  JobPdfReportMeta,
+  WorkflowCode,
+} from '../../client/src/types/jobs.ts'
 import type { ILogger } from '../logging/logger.ts'
+import {
+  UsAirportPdfReportService,
+  type IPdfReportService,
+} from '../services/pdf-report-service.ts'
 import {
   US_AIRPORT_BASELINES,
   US_AUTHORITATIVE_SOURCES,
@@ -23,6 +31,7 @@ export interface DeterministicSkillToolPassResult {
   keyMetricLabel: string
   keyMetricValue: string
   subConversationReply: string
+  generatedReports?: JobPdfReportMeta[]
 }
 
 export type DomainAiToolsMap = ReturnType<typeof createDomainAiTools>
@@ -152,6 +161,16 @@ export const AI_TOOLS_METADATA: AiToolMetadata[] = [
     description:
       'Computes primary-evidence Infratech maturity & risk-adjusted NPV, NAS feed health (S, C), and FAA Hub Cohort standard/robust z-scores.',
   },
+  {
+    id: 'T13',
+    name: 'generatePdfAssessmentReport',
+    workflowCodes: ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7'],
+    reportTemplates: ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9', 'R10'],
+    formulaSummary:
+      'PDF-1.4 Binary Synthesis with Section 6 Formulas + Mandatory Provenance Block (Credibility 1-5)',
+    description:
+      'Compiles and writes a multi-page institutional PDF assessment report (R1–R10) for the job with reproducible formulas, baseline tables, sub-conversation transcript, and primary U.S. source provenance.',
+  },
 ]
 
 function factorial(n: number): number {
@@ -230,7 +249,10 @@ export function calculateErlangCMetrics(params: {
   }
 }
 
-export function createDomainAiTools(logger?: ILogger) {
+export function createDomainAiTools(
+  logger?: ILogger,
+  pdfReportService?: IPdfReportService,
+) {
   const logTool = (
     toolId: string,
     toolName: string,
@@ -772,6 +794,95 @@ export function createDomainAiTools(logger?: ILogger) {
         }
       },
     }),
+
+    generatePdfAssessmentReport: tool({
+      description:
+        'Generate and save an institutional PDF assessment report document (R1 through R10) for a U.S. airport modernization job with formulas, tables, and primary provenance.',
+      inputSchema: z.object({
+        jobId: z.string().default('JOB-4091'),
+        workflowCode: z
+          .enum(['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7'])
+          .default('W1'),
+        airportIata: z.string().default('JFK'),
+        reportCode: z
+          .enum(['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9', 'R10'])
+          .default('R1'),
+        title: z
+          .string()
+          .default('U.S. Airport Modernization Assessment Report'),
+        purpose: z
+          .string()
+          .default(
+            'Evaluate U.S. airport capital stack, statutory compliance, and operational readiness.',
+          ),
+      }),
+      execute: async (input) => {
+        const code = input.airportIata.trim().toUpperCase()
+        const baseline = US_AIRPORT_BASELINES[code] ?? US_AIRPORT_BASELINES.JFK
+        const syntheticJob: EcsJob = {
+          id: input.jobId,
+          code: input.workflowCode as WorkflowCode,
+          workflowName: 'U.S. Airport Modernization Assessment',
+          title: input.title,
+          purpose: input.purpose,
+          airportIata: baseline.iata,
+          airportIcao: baseline.icao,
+          airportName: baseline.name,
+          ecsSystem: 'ReportingSystem',
+          lifecycleState: 'ReportGenerated',
+          status: 'completed',
+          progress: 100,
+          elapsed: '01m 00s',
+          eta: '00m 00s',
+          owner: 'Deloitte ECS Advisory',
+          keyMetricLabel: 'Senior DSCR & CPE',
+          keyMetricValue: `${baseline.dscrSenior}x · $${baseline.cpeUsd}`,
+          summary: input.purpose,
+          steps: [
+            {
+              id: 's1',
+              timestamp: new Date().toISOString().slice(11, 19),
+              stage: 'PDF Report Compilation',
+              detail: `Synthesized ${input.reportCode} PDF report for ${baseline.iata}`,
+              state: 'done',
+            },
+          ],
+          chatHistory: [
+            {
+              id: 'm1',
+              role: 'user',
+              content: input.purpose,
+              timestamp: new Date().toISOString().slice(11, 19),
+            },
+          ],
+        }
+
+        const generated = pdfReportService?.generateJobReportPdf(
+          syntheticJob,
+          input.reportCode,
+        )
+        logTool('T13', 'generatePdfAssessmentReport', {
+          jobId: input.jobId,
+          airportIata: baseline.iata,
+          reportCode: input.reportCode,
+          fileName: generated?.meta.fileName,
+          sizeBytes: generated?.meta.sizeBytes,
+        })
+
+        return {
+          status: 'pdf_generated',
+          reportCode: input.reportCode,
+          airportIata: baseline.iata,
+          pdfReport: generated?.meta ?? {
+            reportCode: input.reportCode,
+            title: `${input.reportCode} Assessment Report`,
+            fileName: `${input.jobId}-${baseline.iata}-${input.reportCode}.pdf`,
+            downloadUrl: `/api/jobs/${encodeURIComponent(input.jobId)}/report.pdf?reportCode=${encodeURIComponent(input.reportCode)}`,
+            generatedAt: new Date().toISOString(),
+          },
+        }
+      },
+    }),
   }
 }
 
@@ -880,9 +991,12 @@ export function runDeterministicSkillToolPass(job: EcsJob): {
  */
 export class UsAirportToolRegistry implements IToolRegistry {
   private readonly logger: ILogger
+  private readonly pdfReportService: IPdfReportService
 
-  constructor(logger: ILogger) {
+  constructor(logger: ILogger, pdfReportService?: IPdfReportService) {
     this.logger = logger
+    this.pdfReportService =
+      pdfReportService ?? new UsAirportPdfReportService(logger)
   }
 
   getMetadata(): AiToolMetadata[] {
@@ -890,11 +1004,19 @@ export class UsAirportToolRegistry implements IToolRegistry {
   }
 
   createExecutableTools(): DomainAiToolsMap {
-    return createDomainAiTools(this.logger)
+    return createDomainAiTools(this.logger, this.pdfReportService)
   }
 
-  executeDeterministicSkillToolPass(job: EcsJob): DeterministicSkillToolPassResult {
+  executeDeterministicSkillToolPass(
+    job: EcsJob,
+  ): DeterministicSkillToolPassResult {
     const result = runDeterministicSkillToolPass(job)
+    const generatedReports = this.pdfReportService.ensureJobReportsOnDisk(job)
+    const primaryReport = generatedReports[0]
+    const enrichedReply = primaryReport
+      ? `${result.subConversationReply} [PDF Report Ready: ${primaryReport.fileName}]`
+      : result.subConversationReply
+
     this.logger.info('ai_skill.deterministic_pass_executed', {
       jobId: job.id,
       workflowCode: job.code,
@@ -902,8 +1024,14 @@ export class UsAirportToolRegistry implements IToolRegistry {
       skillId: result.skillId,
       toolName: result.toolName,
       reportCode: result.reportCode,
+      pdfFileName: primaryReport?.fileName,
       keyMetricValue: result.keyMetricValue,
     })
-    return result
+
+    return {
+      ...result,
+      subConversationReply: enrichedReply,
+      generatedReports,
+    }
   }
 }
