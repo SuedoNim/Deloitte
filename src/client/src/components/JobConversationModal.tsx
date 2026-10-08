@@ -12,9 +12,8 @@ export function JobConversationModal(props: JobConversationModalProps) {
   const [promptText, setPromptText] = createSignal('')
   const [isSending, setIsSending] = createSignal(false)
 
-  const handleSubmit = async (e: SubmitEvent) => {
-    e.preventDefault()
-    const trimmed = promptText().trim()
+  const sendDirectMessage = async (msg: string) => {
+    const trimmed = msg.trim()
     if (!trimmed || isSending()) return
     setIsSending(true)
     try {
@@ -24,6 +23,17 @@ export function JobConversationModal(props: JobConversationModalProps) {
       setIsSending(false)
     }
   }
+
+  const handleSubmit = async (e: SubmitEvent) => {
+    e.preventDefault()
+    await sendDirectMessage(promptText())
+  }
+
+  const quickConversationStarters = () => [
+    `What Airport Modernization services, live online sources, and calculations can you perform for ${props.job.airportIata}?`,
+    `Fetch live online FAA & ADS-B telemetry for ${props.job.airportIata} and explain the key engineering metrics (no report needed).`,
+    `Please generate the formal PDF assessment report for ${props.job.airportIata} using your PDF report tool.`,
+  ]
 
   return (
     <div
@@ -39,7 +49,7 @@ export function JobConversationModal(props: JobConversationModalProps) {
         <div class="modal-header">
           <div>
             <h2 id="job-conversation-modal-title" class="modal-title">
-              Job Conversation & PDF Reports · {props.job.id} ({props.job.airportIata})
+              Specialist Job Agent Conversation & PDF Report · {props.job.id} ({props.job.airportIata})
             </h2>
             <p class="modal-subtitle tabular-nums">
               {props.job.code} · {props.job.workflowName} · {props.job.ecsSystem} · State:{' '}
@@ -47,13 +57,36 @@ export function JobConversationModal(props: JobConversationModalProps) {
             </p>
           </div>
           <div class="job-modal-header-actions">
-            <button
-              type="button"
-              class="btn-primary"
-              onClick={() => props.onDownloadReport(props.job)}
+            <Show
+              when={(props.job.reports?.length ?? 0) > 0}
+              fallback={
+                <button
+                  type="button"
+                  class="btn-secondary"
+                  disabled={isSending()}
+                  onClick={() =>
+                    sendDirectMessage(
+                      `Please generate the formal PDF report for ${props.job.airportIata} (${props.job.title}) using your PDF report tool.`,
+                    )
+                  }
+                >
+                  {isSending() ? 'Running PDF Tool…' : 'Request PDF Report via Tool'}
+                </button>
+              }
             >
-              Download Primary PDF Report
-            </button>
+              <button
+                type="button"
+                class="btn-primary"
+                onClick={() =>
+                  props.onDownloadReport(
+                    props.job,
+                    props.job.reports?.[0]?.reportCode,
+                  )
+                }
+              >
+                Download {props.job.reports?.[0]?.reportCode} PDF Report
+              </button>
+            </Show>
             <button
               type="button"
               class="btn-secondary"
@@ -66,25 +99,22 @@ export function JobConversationModal(props: JobConversationModalProps) {
 
         <div class="job-conversation-modal-body">
           <div class="job-purpose-box">
-            <span class="job-section-label">Single Specific Purpose:</span>{' '}
+            <span class="job-section-label">Airport Modernization Mandate:</span>{' '}
             <span>{props.job.purpose}</span>
           </div>
 
           <div class="job-reports-bar">
             <div class="job-section-label">
-              Generated PDF Assessment Reports (Standard U.S. Templates)
+              Tool-Generated PDF Assessment Report (Single Relevant Report per Request)
             </div>
             <div class="job-reports-list">
               <Show
                 when={(props.job.reports?.length ?? 0) > 0}
                 fallback={
-                  <button
-                    type="button"
-                    class="icon-action-btn btn-pdf"
-                    onClick={() => props.onDownloadReport(props.job)}
-                  >
-                    <span>Download {props.job.id} Assessment PDF</span>
-                  </button>
+                  <span class="modal-subtitle">
+                    No PDF report generated yet — reports are only created by the{' '}
+                    <code>generatePdfAssessmentReport</code> tool when required.
+                  </span>
                 }
               >
                 <For each={props.job.reports}>
@@ -92,7 +122,7 @@ export function JobConversationModal(props: JobConversationModalProps) {
                     <button
                       type="button"
                       class="report-download-chip tabular-nums"
-                      title={`Download ${rep.title}`}
+                      title={`Download ${rep.title} (Generated by generatePdfAssessmentReport Tool)`}
                       onClick={() => props.onDownloadReport(props.job, rep.reportCode)}
                     >
                       <svg
@@ -110,7 +140,9 @@ export function JobConversationModal(props: JobConversationModalProps) {
                           stroke-linejoin="round"
                         />
                       </svg>
-                      <span>{rep.reportCode} PDF</span>
+                      <span>
+                        {rep.reportCode} PDF · {rep.title}
+                      </span>
                       <span class="report-chip-sub">({rep.fileName})</span>
                     </button>
                   )}
@@ -121,7 +153,7 @@ export function JobConversationModal(props: JobConversationModalProps) {
 
           <div class="job-conversation-transcript">
             <div class="job-section-label">
-              Full Job LLM Sub-Conversation ({props.job.chatHistory.length} messages)
+              Specialist Job Agent Conversation ({props.job.chatHistory.length} messages)
             </div>
             <ul class="job-subchat-list job-subchat-list-modal">
               <For each={props.job.chatHistory}>
@@ -130,8 +162,8 @@ export function JobConversationModal(props: JobConversationModalProps) {
                     <div class="job-subchat-meta tabular-nums">
                       <span>
                         {msg.role === 'user'
-                          ? 'Operator / Job Mandate'
-                          : 'Single-Purpose Job Agent'}
+                          ? 'Operator / Airport Sponsor'
+                          : `${props.job.workflowName} Specialist Agent`}
                       </span>
                       <span>{msg.timestamp}</span>
                     </div>
@@ -142,11 +174,26 @@ export function JobConversationModal(props: JobConversationModalProps) {
             </ul>
           </div>
 
+          <div class="prompt-starters" aria-label="Quick specialist agent questions">
+            <For each={quickConversationStarters()}>
+              {(starter) => (
+                <button
+                  type="button"
+                  class="starter-chip"
+                  disabled={isSending()}
+                  onClick={() => sendDirectMessage(starter)}
+                >
+                  {starter}
+                </button>
+              )}
+            </For>
+          </div>
+
           <form class="job-conversation-form" onSubmit={handleSubmit}>
             <input
               type="text"
               class="conn-input"
-              placeholder={`Send a direct instruction to ${props.job.id} (${props.job.ecsSystem}) and refresh its PDF report…`}
+              placeholder={`Converse with the ${props.job.workflowName} Agent for ${props.job.airportIata} (ask questions, run live calculations, or request a PDF report)…`}
               aria-label={`Message ${props.job.id} sub-conversation`}
               value={promptText()}
               onInput={(e) => setPromptText(e.currentTarget.value)}
@@ -156,7 +203,7 @@ export function JobConversationModal(props: JobConversationModalProps) {
               class="btn-primary"
               disabled={isSending() || !promptText().trim()}
             >
-              {isSending() ? 'Running Tool…' : 'Send to Job Agent'}
+              {isSending() ? 'Agent Working…' : 'Send to Specialist Agent'}
             </button>
           </form>
         </div>

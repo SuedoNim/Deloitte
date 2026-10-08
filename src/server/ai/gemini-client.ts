@@ -217,14 +217,22 @@ export async function runGeminiJobManagementChat(params: {
           title,
           purpose,
         })
+        const conversationalIntro =
+          response.text?.trim() ||
+          `I would be glad to help with your Airport Modernization initiative! I have dispatched a dedicated **${created.code} (${created.workflowName})** specialist job for **${created.airportName} (${created.airportIata})**.`
         toolSummaries.push(
           [
-            `### Job Created via Google Gemini (\`createJob\` · \`${model}\`)`,
+            conversationalIntro,
+            ``,
+            `### Airport Modernization Job Dispatched (\`createJob\` · \`${model}\`)`,
             ``,
             `- **New Job ID**: \`${created.id}\` (\`pg-boss\` ID: \`${created.pgBossJobId ?? 'queued'}\`)`,
-            `- **Workflow & Airport**: \`${created.code}\` (${created.ecsSystem}) · **${created.airportIata} (${created.airportIcao})**`,
-            `- **Single Purpose**: ${created.purpose}`,
+            `- **Modernization Service**: \`${created.code}\` — **${created.workflowName}** (\`${created.ecsSystem}\`)`,
+            `- **Target Airport**: **${created.airportName} (${created.airportIata} / ${created.airportIcao})**`,
+            `- **Job Mandate**: ${created.purpose}`,
             `- **Status**: **IN PROGRESS** (${created.progress}%)`,
+            ``,
+            `Your specialist Job Agent is now pulling live online telemetry (\`fetchOnlineAirportLiveData\`) and running the requisite Airport Modernization calculation tools. You can open its **Conversation** panel anytime to chat directly with the specialist agent!`,
           ].join('\n'),
         )
       } else if (call.name === 'updateJob') {
@@ -241,13 +249,18 @@ export async function runGeminiJobManagementChat(params: {
           status: 'in_progress',
         })
         if (updated) {
+          const conversationalIntro =
+            response.text?.trim() ||
+            `Absolutely — I have updated **${updated.id}** and re-orchestrated its Airport Modernization specialist agent with your new objective.`
           toolSummaries.push(
             [
-              `### Job Updated via Google Gemini (\`updateJob\` · \`${model}\`)`,
+              conversationalIntro,
               ``,
-              `- **Job**: \`${updated.id}\` · \`${updated.code}\` · **${updated.airportIata}** (*${updated.title}*)`,
+              `### Airport Modernization Job Updated (\`updateJob\` · \`${model}\`)`,
+              ``,
+              `- **Job**: \`${updated.id}\` · \`${updated.code}\` (**${updated.workflowName}**) · **${updated.airportIata}** (*${updated.title}*)`,
               `- **Re-Orchestrated pg-boss ID**: \`${updated.pgBossJobId ?? 'n/a'}\``,
-              `- **Updated Single Purpose**: ${updated.purpose}`,
+              `- **Updated Mandate**: ${updated.purpose}`,
               `- **Status**: \`${updated.status}\` (${updated.progress}%)`,
             ].join('\n'),
           )
@@ -257,13 +270,18 @@ export async function runGeminiJobManagementChat(params: {
         const reason = args.reason ? String(args.reason).trim() : undefined
         const aborted = await params.jobRepository.abort(jobId, reason)
         if (aborted) {
+          const conversationalIntro =
+            response.text?.trim() ||
+            `Understood. I have safely halted **${aborted.id}** in \`pg-boss\` so it will no longer consume compute resources.`
           toolSummaries.push(
             [
-              `### Job Aborted via Google Gemini (\`abortJob\` · \`${model}\`)`,
+              conversationalIntro,
+              ``,
+              `### Airport Modernization Job Aborted (\`abortJob\` · \`${model}\`)`,
               ``,
               `- **Job**: \`${aborted.id}\` · \`${aborted.code}\` · **${aborted.airportIata}** (*${aborted.title}*)`,
               `- **New Status**: **FAILURE / ABORTED** (${aborted.progress}%)`,
-              `- **Single Purpose**: ${aborted.purpose}`,
+              `- **Original Mandate**: ${aborted.purpose}`,
             ].join('\n'),
           )
         }
@@ -272,9 +290,14 @@ export async function runGeminiJobManagementChat(params: {
         const existing = params.jobRepository.getById(jobId)
         const removed = await params.jobRepository.remove(jobId)
         if (removed && existing) {
+          const conversationalIntro =
+            response.text?.trim() ||
+            `Done — I have cancelled and removed **${existing.id}** from your Airport Modernization queue.`
           toolSummaries.push(
             [
-              `### Job Removed via Google Gemini (\`removeJob\` · \`${model}\`)`,
+              conversationalIntro,
+              ``,
+              `### Airport Modernization Job Removed (\`removeJob\` · \`${model}\`)`,
               ``,
               `- **Removed Job**: \`${existing.id}\` (*${existing.title}*)`,
               `- **Status**: Cancelled in \`pg-boss\` and deleted from \`PGlite\`.`,
@@ -286,13 +309,22 @@ export async function runGeminiJobManagementChat(params: {
         if (jobId) {
           const found = params.jobRepository.getById(jobId)
           if (found) {
+            const reportInfo =
+              found.reports && found.reports.length > 0
+                ? found.reports.map((r) => `${r.reportCode} (${r.fileName})`).join(', ')
+                : 'No PDF report generated (not required unless requested)'
             toolSummaries.push(
               [
-                `### Job Inspection via Google Gemini (\`listJobs\` → \`${found.id}\`)`,
+                response.text?.trim() ||
+                  `Here is the latest status from your **${found.code} (${found.workflowName})** specialist job at **${found.airportName} (${found.airportIata})**:`,
                 ``,
-                `- **Job**: \`${found.id}\` · \`${found.code}\` · **${found.airportIata} / ${found.airportIcao}**`,
+                `### Airport Modernization Job Inspection (\`listJobs\` → \`${found.id}\`)`,
+                ``,
+                `- **Job**: \`${found.id}\` · \`${found.code}\` (**${found.workflowName}**) · **${found.airportIata} / ${found.airportIcao}**`,
                 `- **Status**: **${found.status.toUpperCase()}** (${found.progress}% · \`${found.ecsSystem}\`)`,
-                `- **Single Purpose**: ${found.purpose}`,
+                `- **Key Calculated Metric (${found.keyMetricLabel})**: \`${found.keyMetricValue}\``,
+                `- **PDF Report Status**: ${reportInfo}`,
+                `- **Mandate**: ${found.purpose}`,
               ].join('\n'),
             )
           }

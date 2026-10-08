@@ -29,14 +29,19 @@ const SEEDED_MESSAGES: UIMessage[] = [
       {
         type: 'text',
         text: [
-          '### Job Management Orchestrator (`PGlite` + `pg-boss`)',
+          '### Welcome to the Deloitte U.S. Airport Modernization & Investment Intelligence Orchestrator',
           '',
-          'This main chat is scoped exclusively to **Job Management Tools** (`createJob`, `updateJob`, `abortJob`, `removeJob`, `listJobs`) to create, update, abort, or remove single-purpose LLM jobs.',
+          'I am your executive co-pilot for **U.S. Airport Modernization Advisory Services**. Through this chat, I can explain our specialized airport engineering capabilities and orchestrate **Specialist Airport Modernization Jobs (`W1`–`W7`)** in `PGlite` and `pg-boss`:',
           '',
-          '- **Workflows (W1–W7)**: W1 Funding & Capital Stack · W2 Capital Delivery & ORAT · W3 Passenger Flow (TSA/CBP) · W4 NAS/BNATCS Cutover · W5 Sustainability & EPA eGRID · W6 Infratech Maturity · W7 Realtime Data & Hub Cohort Benchmarking',
-          '- **Active U.S. Airport Baselines**: `JFK`, `DEN`, `LAX`, `ORD`, `ATL`, `DFW`, `DCA`, `SDF`, `GEG`',
+          '- **W1 · Federal Grant, Capital Stack & Municipal Bond Advisory**: FAA AIP/BIL ATP grants, PFCs, TIFIA loans, and Senior DSCR / CPE modeling (`R1`, `R4`, `R10`)',
+          '- **W2 · Capital Program Delivery, NEPA & ACRP 164 ORAT**: Benefit-Cost Analysis, Earned Value (`CPI`/`SPI`), and Operational Readiness trials (`R2`, `R3`, `R6`)',
+          '- **W3 · Passenger Flow, TSA Touchless ID & CBP Biometric Processing**: M/M/c Erlang-C checkpoint wait-time modeling and BHS throughput (`R5`, `R7`, `R8`)',
+          '- **W4 · NAS Airspace, NextGen & BNATCS Surface Cutover**: FAA surface radar/tower cutover safety and ASPM delay-minute savings (`R3`, `R6`, `R8`)',
+          '- **W5 · Decarbonization, FAA VALE, ZEV & EPA eGRID Sustainability**: Scope 1 & 2 emissions, 400Hz PCA gate electrification, and Part 150 noise (`R9`)',
+          '- **W6 · Infratech Maturity, Digital Twin & Cyber-Physical ROI**: 25-capability Infratech diagnostic and NPV/IRR valuation (`R4`, `R7`)',
+          '- **W7 · Realtime Online Aviation Telemetry & U.S. Hub Benchmarking**: Live queries across FAA/DOT/EPA/OpenSky/Weather portals (`R1`–`R10`)',
           '',
-          'Send a message below to create, update, abort, remove, or inspect single-purpose LLM jobs in `PGlite` and `pg-boss`.',
+          'Ask me **"What can your Airport Modernization jobs do?"**, or ask me to launch a job for **`JFK`**, **`DEN`**, **`LAX`**, **`ORD`**, **`ATL`**, **`DFW`**, **`DCA`**, **`SDF`**, or **`GEG`**. Each job agent uses its **Live Online Data Tool** (`fetchOnlineAirportLiveData`) and **Domain Calculation Tools**, and only invokes its **PDF Report Tool** (`generatePdfAssessmentReport`) when a formal report is required.',
         ].join('\n'),
       },
     ],
@@ -44,10 +49,10 @@ const SEEDED_MESSAGES: UIMessage[] = [
 ]
 
 const BASE_PROMPT_STARTERS = [
-  'Create a W1 job for ORD to audit AIP grant drawdown and Senior DSCR coverage',
-  'Create a W4 job for DEN to verify BNATCS surface radar cutover and ASPM delay savings',
-  'Create a W3 job for ATL to evaluate TSA Touchless ID and biometric bag-drop Erlang-C queues',
-  'Create a W2 job for JFK to evaluate ACRP Report 164 ORAT readiness and P3 LLCR',
+  'What can you and your Airport Modernization jobs do for our airport?',
+  'Create a W1 job for ORD to audit AIP grant drawdown and Senior DSCR coverage and generate the R10 report',
+  'Create a W3 job for ATL to evaluate TSA Touchless ID biometric checkpoint wait times and generate the R7 report',
+  'Create a W5 job for LAX to calculate EPA eGRID emissions and 400Hz gate electrification savings',
 ]
 
 function renderFormattedText(raw: string) {
@@ -86,7 +91,7 @@ export default function App() {
   const [statusFilter, setStatusFilter] = createSignal<'all' | JobStatus>('all')
   const [searchQuery, setSearchQuery] = createSignal('')
   const [inputPrompt, setInputPrompt] = createSignal('')
-  const [attachSelectedJob, setAttachSelectedJob] = createSignal(true)
+  const [attachSelectedJob, setAttachSelectedJob] = createSignal(false)
   const [routineUpdatesEnabled, setRoutineUpdatesEnabled] = createSignal(true)
   const [recentSubChatUpdates, setRecentSubChatUpdates] = createSignal<JobSubChatUpdate[]>([])
   const [mobileView, setMobileView] = createSignal<'split' | 'jobs' | 'chat'>('split')

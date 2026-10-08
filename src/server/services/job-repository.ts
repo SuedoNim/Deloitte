@@ -170,7 +170,7 @@ export class PglitePgBossJobManager implements IJobRepository {
       pdfReportService ?? new UsAirportPdfReportService(logger)
     this.jobsCache = structuredClone(seedJobs).map((job) => ({
       ...job,
-      reports: this.pdfReportService.ensureJobReportsOnDisk(job),
+      reports: job.reports ?? [],
     }))
     this.nextSequence = 4100 + seedJobs.length
 
@@ -325,7 +325,7 @@ export class PglitePgBossJobManager implements IJobRepository {
       `Execute ${code} (${wf.system}) analysis and telemetry verification for ${airportIata} (${ap.name}): ${title}.`
     const nowTime = new Date().toISOString().slice(11, 19)
 
-    const initialSubMessage = `Queued in pg-boss (${JOB_QUEUE_NAME}). Initializing ${wf.system} components for ${airportIata}/${ap.icao}.`
+    const initialSubMessage = `Welcome! I am your ${wf.name} Specialist Agent (${wf.system}) for ${ap.name} (${airportIata}/${ap.icao}). I am queued in pg-boss and preparing our Airport Modernization live telemetry and calculation tools for your mandate.`
 
     const initialChatHistory: JobChatMessage[] = [
       {
@@ -378,8 +378,8 @@ export class PglitePgBossJobManager implements IJobRepository {
         },
       ],
       chatHistory: initialChatHistory,
+      reports: [],
     }
-    newJob.reports = this.pdfReportService.ensureJobReportsOnDisk(newJob)
 
     this.jobRevisions.set(newJob.id, 1)
 
@@ -447,7 +447,7 @@ export class PglitePgBossJobManager implements IJobRepository {
         content: `Updated job purpose: ${nextPurpose}`,
         timestamp: nowTime,
       })
-      subChatAck = `Re-orchestrated in pg-boss for updated purpose: "${nextPurpose}". Executing ${wf.system} at ${current.progress}%.`
+      subChatAck = `I have updated your ${wf.name} (${wf.system}) mandate for ${current.airportName} (${current.airportIata}) to: "${nextPurpose}". I am re-running live online telemetry and engineering calculations now.`
       updatedChatHistory.push({
         id: `msg-update-a-${Date.now()}`,
         role: 'assistant',
@@ -676,12 +676,12 @@ export class PglitePgBossJobManager implements IJobRepository {
       timestamp: nowTime,
     }
 
-    const toolPass = this.skillRegistry.executeSkillToolPass({
-      ...current,
-      chatHistory: [...current.chatHistory, userEntry],
-    })
+    const turnResult = await this.agentRunner.runInteractiveJobTurn(
+      current,
+      userMessage.trim(),
+    )
 
-    const assistantReply = `${toolPass.subConversationReply} (Addressed operator prompt: "${userMessage.trim().slice(0, 80)}")`
+    const assistantReply = turnResult.assistantReply
     const assistantEntry: JobChatMessage = {
       id: `msg-a-${Date.now() + 1}`,
       role: 'assistant',
@@ -689,13 +689,26 @@ export class PglitePgBossJobManager implements IJobRepository {
       timestamp: nowTime,
     }
 
+    const existingReports = current.reports ?? []
+    const mergedReports = [...existingReports]
+    for (const newRep of turnResult.reports) {
+      const existingIdx = mergedReports.findIndex(
+        (r) => r.reportCode === newRep.reportCode,
+      )
+      if (existingIdx >= 0) {
+        mergedReports[existingIdx] = newRep
+      } else {
+        mergedReports.push(newRep)
+      }
+    }
+
     const updated: EcsJob = {
       ...current,
-      keyMetricLabel: toolPass.keyMetricLabel,
-      keyMetricValue: toolPass.keyMetricValue,
+      keyMetricLabel: turnResult.keyMetricLabel,
+      keyMetricValue: turnResult.keyMetricValue,
       chatHistory: [...current.chatHistory, userEntry, assistantEntry],
+      reports: mergedReports,
     }
-    updated.reports = this.pdfReportService.ensureJobReportsOnDisk(updated)
 
     this.jobsCache[idx] = updated
     if (this.initialized) {
@@ -706,7 +719,8 @@ export class PglitePgBossJobManager implements IJobRepository {
       jobId: updated.id,
       code: updated.code,
       airportIata: updated.airportIata,
-      reportCode: toolPass.reportCode,
+      reportGenerated: turnResult.reportGenerated,
+      reportCode: turnResult.reportCode,
     })
 
     this.notifySubscribers()

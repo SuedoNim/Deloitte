@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import type { EcsJob, JobSubChatUpdate } from '../../client/src/types/jobs.ts'
@@ -25,19 +27,63 @@ export function createJobsRoutes(
     if (!job) {
       return c.json({ error: 'Job not found' }, 404)
     }
-    const reports = pdfReportService.ensureJobReportsOnDisk(job)
-    return c.json({ jobId: job.id, reports })
+    return c.json({ jobId: job.id, reports: job.reports ?? [] })
   })
 
   router.get('/:id/report.pdf', (c) => {
     const id = c.req.param('id')
-    const reportCode = c.req.query('reportCode')
+    const reportCode = c.req.query('reportCode')?.trim().toUpperCase()
     const job = jobRepository.getById(id)
     if (!job) {
       return c.json({ error: 'Job not found' }, 404)
     }
 
-    const generated = pdfReportService.generateJobReportPdf(job, reportCode)
+    const existingReports = job.reports ?? []
+    const targetMeta = reportCode
+      ? existingReports.find((r) => r.reportCode === reportCode)
+      : existingReports[0]
+
+    if (targetMeta) {
+      const filePath = path.join(
+        pdfReportService.getReportsDirectory(),
+        targetMeta.fileName,
+      )
+      if (fs.existsSync(filePath)) {
+        const buffer = fs.readFileSync(filePath)
+        logger.info('jobs.pdf_report_downloaded', {
+          jobId: job.id,
+          airportIata: job.airportIata,
+          reportCode: targetMeta.reportCode,
+          fileName: targetMeta.fileName,
+          sizeBytes: buffer.byteLength,
+          source: 'tool-generated-disk-artifact',
+        })
+        return new Response(new Uint8Array(buffer), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': `attachment; filename="${targetMeta.fileName}"`,
+            'Content-Length': String(buffer.byteLength),
+            'Cache-Control': 'no-store',
+          },
+        })
+      }
+    }
+
+    if (existingReports.length === 0) {
+      return c.json(
+        {
+          error:
+            'No PDF report was generated for this job because a report was not required. Ask the Job Agent in the job conversation to generate a PDF report using its PDF Report Tool.',
+        },
+        404,
+      )
+    }
+
+    const generated = pdfReportService.generateJobReportPdf(
+      job,
+      reportCode ?? targetMeta?.reportCode,
+    )
     logger.info('jobs.pdf_report_downloaded', {
       jobId: job.id,
       airportIata: job.airportIata,

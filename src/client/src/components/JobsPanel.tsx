@@ -7,38 +7,38 @@ const WORKFLOW_SKILL_INFO: Record<
 > = {
   W1: {
     skill: 'S1 · us-funding-capital-stack',
-    reports: 'R1, R2, R4, R9',
-    tools: 'computeCapitalStackAndGap · computeAipGrantAndPfcCapacity · computeCreditAndAirlineRates',
+    reports: 'R1 / R4 / R10 (Single Relevant Report)',
+    tools: 'fetchOnlineAirportLiveData · computeCapitalStackAndGap · computeAipGrantAndPfcCapacity · computeCreditAndAirlineRates · generatePdfAssessmentReport',
   },
   W2: {
     skill: 'S2 · capital-delivery-nepa-orat',
-    reports: 'R2, R3, R5, R6, R9',
-    tools: 'evaluateDemandTriggerAndBca · computeProjectEvmAndCsppWindow · evaluateAcrypOratReadinessGate',
+    reports: 'R2 / R3 / R6 (Single Relevant Report)',
+    tools: 'fetchOnlineAirportLiveData · evaluateDemandTriggerAndBca · computeProjectEvmAndCsppWindow · evaluateAcrypOratReadinessGate · generatePdfAssessmentReport',
   },
   W3: {
     skill: 'S3 · passenger-flow-tsa-cbp',
-    reports: 'R6, R7, R10',
-    tools: 'computeErlangCQueueAndLaneTarget · queryUsAirportBaselineAndSources',
+    reports: 'R5 / R7 / R8 (Single Relevant Report)',
+    tools: 'fetchOnlineAirportLiveData · computeErlangCQueueAndLaneTarget · queryUsAirportBaselineAndSources · generatePdfAssessmentReport',
   },
   W4: {
     skill: 'S4 · nas-bnatcs-airfield-cutover',
-    reports: 'R3, R5, R10',
-    tools: 'computeBnatcsCutoverRiskAndDelaySavings · computeProjectEvmAndCsppWindow',
+    reports: 'R3 / R6 / R8 (Single Relevant Report)',
+    tools: 'fetchOnlineAirportLiveData · computeBnatcsCutoverRiskAndDelaySavings · computeProjectEvmAndCsppWindow · generatePdfAssessmentReport',
   },
   W5: {
     skill: 'S5 · sustainability-vale-egrid',
-    reports: 'R8, R9',
-    tools: 'computeEgridEmissionsAndGateElectrification · queryUsAirportBaselineAndSources',
+    reports: 'R9 (Single Relevant Report)',
+    tools: 'fetchOnlineAirportLiveData · computeEgridEmissionsAndGateElectrification · queryUsAirportBaselineAndSources · generatePdfAssessmentReport',
   },
   W6: {
     skill: 'S6 · infratech-maturity-roi',
-    reports: 'R3, R7',
-    tools: 'evaluateInfratechAndCohortBenchmark · queryUsAirportBaselineAndSources',
+    reports: 'R4 / R7 (Single Relevant Report)',
+    tools: 'fetchOnlineAirportLiveData · evaluateInfratechAndCohortBenchmark · queryUsAirportBaselineAndSources · generatePdfAssessmentReport',
   },
   W7: {
     skill: 'S7 · us-data-hub-cohort-benchmark',
-    reports: 'R7, R9, R10',
-    tools: 'evaluateInfratechAndCohortBenchmark · queryUsAirportBaselineAndSources',
+    reports: 'R1–R10 (Single Relevant Report)',
+    tools: 'fetchOnlineAirportLiveData · evaluateInfratechAndCohortBenchmark · queryUsAirportBaselineAndSources · generatePdfAssessmentReport',
   },
 }
 
@@ -271,9 +271,20 @@ export function JobsPanel(props: JobsPanelProps) {
                       <button
                         type="button"
                         class="icon-action-btn btn-pdf"
-                        title={`Download PDF assessment report (${WORKFLOW_SKILL_INFO[job.code].reports}) for ${job.id}`}
+                        disabled={(job.reports?.length ?? 0) === 0}
+                        title={
+                          job.reports && job.reports.length > 0
+                            ? `Download tool-generated ${job.reports[0].reportCode} PDF report (${job.reports[0].title}) for ${job.id}`
+                            : `No PDF report generated for ${job.id} (reports are only created by the PDF Report Tool when required)`
+                        }
                         aria-label={`Download PDF report for ${job.id}`}
-                        onClick={(e) => props.onDownloadPdfReport(job, e)}
+                        onClick={(e) =>
+                          props.onDownloadPdfReport(
+                            job,
+                            e,
+                            job.reports?.[0]?.reportCode,
+                          )
+                        }
                       >
                         <svg
                           width="13"
@@ -290,7 +301,11 @@ export function JobsPanel(props: JobsPanelProps) {
                             stroke-linejoin="round"
                           />
                         </svg>
-                        <span>PDF</span>
+                        <span>
+                          {job.reports && job.reports.length > 0
+                            ? `${job.reports[0].reportCode} PDF`
+                            : 'No PDF'}
+                        </span>
                       </button>
 
                       <button

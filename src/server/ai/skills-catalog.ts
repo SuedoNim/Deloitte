@@ -31,7 +31,10 @@ export interface ISkillRegistry {
     skills: AiSkillDefinition[]
     tools: AiToolMetadata[]
   }
-  executeSkillToolPass(job: EcsJob): DeterministicSkillToolPassResult
+  executeSkillToolPass(
+    job: EcsJob,
+    userPromptOverride?: string,
+  ): Promise<DeterministicSkillToolPassResult>
 }
 
 export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
@@ -43,6 +46,7 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     ecsSystem: 'FundingSystem',
     reportTemplates: ['R1', 'R2', 'R4', 'R9'],
     boundToolNames: [
+      'fetchOnlineAirportLiveData',
       'queryUsAirportBaselineAndSources',
       'computeCapitalStackAndGap',
       'computeAipGrantAndPfcCapacity',
@@ -53,10 +57,10 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     description:
       'Quantifies 5-year NPIAS/CIP capital gaps, 49 U.S.C. § 47109 AIP grant shares (75%–95%), 14 CFR Part 158 PFC bonding ($4.50 cap less $0.11 handling fee), Senior/All-In DSCR, Residual/Compensatory CPE, and DCOH.',
     systemInstruction: [
-      'You are the U.S. Airport Funding & Capital Stack Specialist Agent (Skill S1 · Workflow W1 · FundingSystem).',
-      'Enforce 49 U.S.C. § 47109 federal AIP shares (75% Large/Medium Hubs, 80% Part 150 Noise, 90%–95% Small/Reliever/GA).',
-      'Enforce 14 CFR Part 158 PFC rules ($4.50/pax cap less $0.11 airline handling compensation = $4.39 net) and FAA Grant Assurance #25 (Revenue Diversion Prohibition unless approved under 49 U.S.C. § 47134 AIPP).',
-      'Use FAA CATS Form 5100-127 and MSRB EMMA covenants (Senior DSCR ≥ 1.25x, DCOH ≥ 365 days) to produce Reports R1, R2, R4, and R9.',
+      'You are a warm, conversant U.S. Airport Funding & Capital Stack Specialist (Skill S1 · Workflow W1 · FundingSystem).',
+      'Speak enthusiastically about your Airport Modernization Capital Stack, AIP/PFC Grant, and Rate-Making Tools so the operator feels well-supported.',
+      'Always use `fetchOnlineAirportLiveData` and the domain calculation tools (`computeCapitalStackAndGap`, `computeAipGrantAndPfcCapacity`, `computeCreditAndAirlineRates`, `evaluateGrantOutlayLifecycle`) to compute verified 49 U.S.C. § 47109 AIP shares, 14 CFR Part 158 net PFC ($4.39/pax), Senior DSCR (>=1.25x), CPE, and DCOH (>=365d).',
+      'Do NOT generate a report unless a report is required by the request. When a report IS required, only the `generatePdfAssessmentReport` tool generates the single matching report (R1, R2, R4, or R9) populated with the requisite calculations.',
     ].join(' '),
   },
   {
@@ -67,6 +71,7 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     ecsSystem: 'ProjectLifecycleSystem',
     reportTemplates: ['R2', 'R3', 'R5', 'R6', 'R9'],
     boundToolNames: [
+      'fetchOnlineAirportLiveData',
       'queryUsAirportBaselineAndSources',
       'evaluateDemandTriggerAndBca',
       'computeProjectEvmAndCsppWindow',
@@ -76,9 +81,10 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     description:
       'Governs FAA TAF/ASV capacity triggers, OMB Circular A-94 Benefit-Cost Analysis (NPV/BCR), DB/PDB/CMAR/DBFOM P3 delivery (LLCR ≥ 1.30x), Earned Value Management (SPI/CPI/CSI/EAC), AC 150/5370-2G CSPP closures, and ACRP 164 ORAT certification.',
     systemInstruction: [
-      'You are the U.S. Capital Delivery, NEPA/CSPP & ORAT Agent (Skill S2 · Workflow W2 · ProjectLifecycleSystem).',
-      'Verify FAA TAF/ASV capacity triggers (≥0.60 planning, ≥0.80 construction), OMB Circular A-94 BCA (BCR ≥ 1.0), and NEPA Order 1050.1F clearance.',
-      'Enforce AC 150/5370-2G Construction Safety & Phasing Plan (CSPP) overnight closure efficiency (η) and ACRP Report 164 ORAT readiness (R ≥ 0.95, 0 critical defects, TSA PGDS, CBP ATDS, TSA Cyber Directive, ADA/ACAA).',
+      'You are a warm, conversant U.S. Capital Delivery, NEPA/CSPP & ORAT Specialist (Skill S2 · Workflow W2 · ProjectLifecycleSystem).',
+      'Present your services as Airport Modernization Capital Delivery, Earned Value, and ORAT Commissioning Tools that guide the user with clarity and confidence.',
+      'Use `fetchOnlineAirportLiveData` (live NOAA METAR & FAA NAS status) together with `evaluateDemandTriggerAndBca`, `computeProjectEvmAndCsppWindow`, and `evaluateAcrypOratReadinessGate` to verify TAF/ASV triggers, OMB A-94 BCA, EVM (SPI/CPI/EAC), AC 150/5370-2G closure efficiency (η), and ACRP 164 ORAT readiness (R >= 0.95).',
+      'Never generate a report if one is not required. When required, only the `generatePdfAssessmentReport` tool generates the single relevant report (R2, R3, R5, R6, or R9).',
     ].join(' '),
   },
   {
@@ -89,6 +95,7 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     ecsSystem: 'PassengerFlowSystem',
     reportTemplates: ['R6', 'R7', 'R10'],
     boundToolNames: [
+      'fetchOnlineAirportLiveData',
       'queryUsAirportBaselineAndSources',
       'computeErlangCQueueAndLaneTarget',
       'generatePdfAssessmentReport',
@@ -96,9 +103,10 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     description:
       'Models Curbside → Biometric Self-Bag-Drop → TSA PreCheck Touchless ID / CT Checkpoints → Boarding → CBP Simplified Arrival FIS using multi-server Erlang-C (M/M/c) queueing math and 95th-percentile wait budgets (W_q95).',
     systemInstruction: [
-      'You are the U.S. Passenger Flow, TSA Checkpoint & CBP FIS Queueing Agent (Skill S3 · Workflow W3 · PassengerFlowSystem).',
-      'Execute multi-server Erlang-C (M/M/c) queueing calculations to evaluate server utilization ρ = λ/(cμ), mean wait W_q, and 95th-percentile wait W_q95 against U.S. stage budgets (Biometric Bag Drop ≤ 70s, TSA PreCheck ≤ 5m, TSA Standard ≤ 10m, CBP FIS ≤ 15m).',
-      'Solve for optimal active lanes/kiosks c* and verify ADA Title II / ACAA 14 CFR Part 382 accessibility and biometric opt-out compliance.',
+      'You are a warm, conversant U.S. Passenger Flow, TSA Checkpoint & CBP FIS Queueing Specialist (Skill S3 · Workflow W3 · PassengerFlowSystem).',
+      'Present your capabilities as Airport Modernization Passenger Flow & Biometric Queue Optimization Tools.',
+      'Use `fetchOnlineAirportLiveData` (live OpenSky ADS-B terminal arrivals & CBP/TSA telemetry) and `computeErlangCQueueAndLaneTarget` to run multi-server Erlang-C (M/M/c) queueing calculations for utilization ρ, mean wait W_q, 95th-percentile wait W_q95, and optimal lanes c*.',
+      'Do not generate a report unless required; when required, only `generatePdfAssessmentReport` generates the single relevant report (R6, R7, or R10).',
     ].join(' '),
   },
   {
@@ -109,6 +117,7 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     ecsSystem: 'ATCDeploymentSystem',
     reportTemplates: ['R3', 'R5', 'R10'],
     boundToolNames: [
+      'fetchOnlineAirportLiveData',
       'queryUsAirportBaselineAndSources',
       'computeBnatcsCutoverRiskAndDelaySavings',
       'computeProjectEvmAndCsppWindow',
@@ -117,9 +126,10 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     description:
       'Tracks FAA BNATCS national & airport equipment lots (44 surface radars, 200 SAI, 89 TFDM, digital voice switches, fiber telecom), scores low-traffic cutover windows, and monetizes ASPM delay reductions via USDOT VTTS + ADOM.',
     systemInstruction: [
-      'You are the U.S. NAS / BNATCS & Airfield Cutover Agent (Skill S4 · Workflow W4 · ATCDeploymentSystem).',
-      'Track site-level deployment of BNATCS lots ($12.5B appropriated July 2025, Dec 2028 Phase-1 target under Peraton prime-integrator contract) and distinguish GAO-26-107992 confirmed figures from secondary reported shortfall figures (~$3.5B).',
-      'Score overnight cutover windows against FAA SWIM traffic exposure and monetize ASPM equipment delay savings using USDOT VTTS ($57.20/hr) and aircraft direct operating cost per minute (ADOM).',
+      'You are a warm, conversant U.S. NAS / BNATCS & Airfield Cutover Specialist (Skill S4 · Workflow W4 · ATCDeploymentSystem).',
+      'Highlight your Airport Modernization Airfield Cutover & Delay Monetization Tools so the user feels confident in their operational decisions.',
+      'Use `fetchOnlineAirportLiveData` (live NOAA METAR, FAA NAS status, and OpenSky ADS-B traffic) and `computeBnatcsCutoverRiskAndDelaySavings` to score overnight cutover windows and monetize ASPM delay reductions via USDOT VTTS ($57.20/hr) and ADOM.',
+      'Never generate a report unless required; when required, only `generatePdfAssessmentReport` generates the single matching report (R3, R5, or R10).',
     ].join(' '),
   },
   {
@@ -130,6 +140,7 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     ecsSystem: 'SustainabilitySystem',
     reportTemplates: ['R8', 'R9'],
     boundToolNames: [
+      'fetchOnlineAirportLiveData',
       'queryUsAirportBaselineAndSources',
       'computeEgridEmissionsAndGateElectrification',
       'generatePdfAssessmentReport',
@@ -137,8 +148,10 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     description:
       'Computes Scope 1+2 emissions using U.S. EPA eGRID subregional grid factors, quantifies FAA VALE/AEDT 400Hz GPU + PCA gate electrification APU savings, and evaluates geothermal HVAC & solar-storage microgrid EaaS P3s.',
     systemInstruction: [
-      'You are the U.S. Airport Sustainability, VALE/ZEV & Energy Transition Agent (Skill S5 · Workflow W5 · SustainabilitySystem).',
-      'Use official U.S. EPA eGRID subregional emission factors and FAA AEDT / VALE methodology to quantify Scope 1+2 inventories, gate electrification APU displacement ($327M FAA grant program), geothermal HVAC retrofits, and solar+battery microgrid EaaS P3s.',
+      'You are a warm, conversant U.S. Airport Sustainability, VALE/ZEV & Energy Transition Specialist (Skill S5 · Workflow W5 · SustainabilitySystem).',
+      'Present your capabilities as Airport Modernization Decarbonization, Gate Electrification & EPA eGRID Tools.',
+      'Use `fetchOnlineAirportLiveData` and `computeEgridEmissionsAndGateElectrification` to quantify Scope 1+2 inventories, 400Hz GPU + PCA gate electrification APU savings, and FAA VALE/ZEV grant leverage.',
+      'Do not generate a report unless required; when required, only `generatePdfAssessmentReport` generates the single matching report (R8 or R9).',
     ].join(' '),
   },
   {
@@ -149,6 +162,7 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     ecsSystem: 'MaturitySystem',
     reportTemplates: ['R3', 'R7'],
     boundToolNames: [
+      'fetchOnlineAirportLiveData',
       'queryUsAirportBaselineAndSources',
       'evaluateInfratechAndCohortBenchmark',
       'generatePdfAssessmentReport',
@@ -156,9 +170,10 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     description:
       'Scores airport infratech maturity (0–4) using strictly primary operational evidence, enforces DataReadinessHold gates, quarantines unofficial vendor/consultancy claims, and computes risk-adjusted Infratech NPV.',
     systemInstruction: [
-      'You are the U.S. Airport Infratech Maturity & ROI Governance Agent (Skill S6 · Workflow W6 · MaturitySystem).',
-      'Score maturity (0–4) across AI flow management, BHS/HVAC predictive maintenance, digital twins, biometrics, and data platforms using primary telemetry only.',
-      'Quarantine McKinsey 6–8% EBITDA uplift and vendor blog adoption claims as Unofficial (Credibility ≤ 3).',
+      'You are a warm, conversant U.S. Airport Infratech Maturity & ROI Governance Specialist (Skill S6 · Workflow W6 · MaturitySystem).',
+      'Talk about your services as Airport Modernization Smart-Tech & ROI Governance Tools that protect the airport from unverified vendor hype.',
+      'Use `fetchOnlineAirportLiveData` and `evaluateInfratechAndCohortBenchmark` to score maturity (0–4) across AI flow, predictive maintenance, digital twins, biometrics, and data platforms while quarantining unofficial consultancy claims.',
+      'Do not generate a report unless required; when required, only `generatePdfAssessmentReport` generates the single relevant report (R3 or R7).',
     ].join(' '),
   },
   {
@@ -169,6 +184,7 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     ecsSystem: 'IngestionSystem',
     reportTemplates: ['R7', 'R9', 'R10'],
     boundToolNames: [
+      'fetchOnlineAirportLiveData',
       'queryUsAirportBaselineAndSources',
       'evaluateInfratechAndCohortBenchmark',
       'generatePdfAssessmentReport',
@@ -176,8 +192,10 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
     description:
       'Monitors U.S. NAS realtime feeds (FAA SWIM, NOTAM, NOAA METAR, AeroAPI, OpenSky, CBP Wait Times) and reconciles batch financial/ops datasets (FAA CATS 5100-127, MSRB EMMA, ASPM, TAF, BTS T-100) across FAA Hub Cohorts.',
     systemInstruction: [
-      'You are the U.S. Realtime Data Hub & FAA Hub Cohort Benchmarking Agent (Skill S7 · Workflow W7 · IngestionSystem / BenchmarkSystem).',
-      'Verify feed staleness (S ≤ 2×SLA) and completeness (C ≥ 0.95), resolve entities by FAA LID / ICAO / IATA, and compute standard (z) and robust (z_IQR) cohort benchmarks within FAA Statutory Hub Classifications.',
+      'You are a warm, conversant U.S. Realtime Data Hub & FAA Hub Cohort Benchmarking Specialist (Skill S7 · Workflow W7 · IngestionSystem / BenchmarkSystem).',
+      'Explain your services as Airport Modernization Live Telemetry & Peer Cohort Benchmarking Tools.',
+      'Use `fetchOnlineAirportLiveData` and `evaluateInfratechAndCohortBenchmark` to verify live NOAA METAR, FAA NAS status, and OpenSky ADS-B feeds and compute standard (z) and robust (z_IQR) cohort benchmarks.',
+      'Do not generate a report unless required; when required, only `generatePdfAssessmentReport` generates the single relevant report (R7, R9, or R10).',
     ].join(' '),
   },
   {
@@ -192,7 +210,7 @@ export const AI_SKILLS_CATALOG: AiSkillDefinition[] = [
       'Cross-cutting synthesis skill that compiles multi-workflow outputs into Standard U.S. Assessment Reports (R1–R10) with sealed Provenance blocks and confidence propagation.',
     systemInstruction: [
       'You are the U.S. Airport Investment Intelligence Report Synthesizer (Skill S8 · Reports R1–R10).',
-      'Synthesize verified outputs from Skills S1–S7 into institutional-grade U.S. airport consultation and due diligence reports with mandatory Provenance citations (Credibility 1–5) and reproducible formulas.',
+      'Synthesize verified outputs from Skills S1–S7 into institutional-grade U.S. airport consultation and due diligence reports using `generatePdfAssessmentReport` only when requested.',
     ].join(' '),
   },
 ]
@@ -262,6 +280,7 @@ export class UsAirportSkillRegistry implements ISkillRegistry {
     const allTools = this.toolRegistry.createExecutableTools()
     const filtered: Record<string, unknown> = {}
     const toolNames = new Set([
+      'fetchOnlineAirportLiveData',
       ...skill.boundToolNames,
       'generatePdfAssessmentReport',
     ])
@@ -292,7 +311,13 @@ export class UsAirportSkillRegistry implements ISkillRegistry {
     }
   }
 
-  executeSkillToolPass(job: EcsJob): DeterministicSkillToolPassResult {
-    return this.toolRegistry.executeDeterministicSkillToolPass(job)
+  async executeSkillToolPass(
+    job: EcsJob,
+    userPromptOverride?: string,
+  ): Promise<DeterministicSkillToolPassResult> {
+    return this.toolRegistry.executeDeterministicSkillToolPass(
+      job,
+      userPromptOverride,
+    )
   }
 }

@@ -16,6 +16,12 @@ install:
 
 # Build the SolidJS frontend into src/client/dist
 build-frontend:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -d node_modules/@google/genai ] || [ ! -d node_modules/esbuild ]; then
+      echo "==> Installing missing workspace dependencies (npm install) ..."
+      npm install
+    fi
     npm run build --workspace=src/client
 
 # Typecheck client and server code
@@ -79,6 +85,10 @@ pack: build-frontend
     #!/usr/bin/env bash
     set -euo pipefail
     echo "==> Packing single-press executable deployment in ./dist-package ..."
+    if [ ! -d node_modules/@google/genai ] || [ ! -d node_modules/esbuild ]; then
+      echo "==> Installing missing dependencies (npm install) ..."
+      npm install
+    fi
     rm -rf dist-package dist-package.tar.gz airport-modernization-ecs
     mkdir -p dist-package/src/client dist-package/logs dist-package/reports dist-package/node_modules/@electric-sql
     cp -r src/client/dist dist-package/src/client/dist

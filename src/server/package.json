@@ -8,9 +8,13 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.84",
+    "@electric-sql/pglite": "^0.5.8",
+    "@google/genai": "^2.28.0",
     "@hono/node-server": "^1.14.0",
     "ai": "^7.0.128",
     "cors": "^2.8.6",
-    "hono": "^4.13.13"
+    "hono": "^4.13.13",
+    "pg-boss": "^12.37.0",
+    "zod": "^4.6.5"
   }
 }
